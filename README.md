@@ -1,60 +1,81 @@
 # RLAttack
 
-Safe reinforcement-learning research against simulated security environments.
+RLAttack is a research platform for learning attack-path exploration policies inside
+deterministic, simulated network and vulnerability graphs.
 
-> Status: foundation only. Runtime services and domain features are intentionally deferred.
+> Status: phase 1 foundation only. Scenario models, Gymnasium environments, agents, and
+> training pipelines are intentionally deferred to later milestones.
 
-## Features
+## Safety boundary
 
-- Typed Python 3.12 package foundation
-- Reproducible lint, type-check, and test commands
-- CI quality gate and public-project governance
-- Documented safety boundary for authorized research
+RLAttack does not scan, exploit, authenticate to, or open shells on external systems.
+Actions such as `scan_service` and `attempt_simulated_access` are domain labels for local
+state transitions, not wrappers around offensive tools. The project will support only:
+
+- deterministic in-process simulators;
+- explicitly local cyber-range adapters with no public-network target path; and
+- sanitized graph import/export that contains no live target or exploit material.
+
+Nmap, exploit frameworks, remote shells, arbitrary command execution, and public target
+adapters are outside the project scope.
+
+## Foundation
+
+- Typed Python package using the `src/` layout
+- Core dependency boundaries for Gymnasium, NetworkX, NumPy, and Pydantic
+- Optional training dependencies for Stable-Baselines3, PyTorch, and TensorBoard
+- Optional FastAPI dashboard dependency group
+- Reproducible lint, format, type-check, and test commands
+- CI quality gate with read-only repository permissions
 
 ## Installation
 
 ```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev]"
 ```
 
+Install training or dashboard dependencies only when working on those milestones:
+
+```bash
+python -m pip install -e ".[dev,training]"
+python -m pip install -e ".[dev,dashboard]"
+```
+
 ## Running
 
-There is no runtime service in this foundation release. Run all quality checks with:
+There is no simulator or training entry point in this foundation release. Run all quality
+checks with:
 
 ```bash
 make check
 ```
 
-Service commands will be added when the API or worker boundary is implemented.
-
 ## Architecture
 
-The initial package uses a `src/` layout and keeps tests outside production code.
-Future API, worker, persistence, and integration boundaries must remain independently
-testable. See [docs/architecture.md](docs/architecture.md).
+The initial package uses a `src/` layout and keeps tests outside production code. Planned
+scenario, simulator, agent, training, evaluation, and explainability layers must remain
+independently testable. See [docs/architecture.md](docs/architecture.md).
 
 ## Limitations
 
-- No API, database, worker, or web interface exists yet.
-- No scanner, exploit, response action, or external integration is implemented.
-- The target allowlist enforcement layer is planned and must precede target-facing features.
+- No scenario schema or Gymnasium environment exists yet.
+- No baseline or learned agent exists yet.
+- No training, evaluation, explainability, or integration code exists yet.
+- The declared optional dependencies are not exercised until their respective milestones.
 
 ## Security policy
 
-Use is limited to systems owned by the operator, local/Docker labs, CTFs, educational
-cyber ranges, and explicitly authorized targets. Public internet discovery, credential
-theft, persistence, defensive-control bypass, malware delivery, and destructive or
-exfiltration behavior are out of scope. See [SECURITY.md](SECURITY.md) and
-[docs/threat-model.md](docs/threat-model.md).
+The platform is simulation-only. Real-system discovery, credential use, persistence,
+defensive-control bypass, malware delivery, destruction, and exfiltration are out of
+scope. See [SECURITY.md](SECURITY.md) and [docs/threat-model.md](docs/threat-model.md).
 
 ## Roadmap
 
-The next milestone defines the domain model and target-validation boundary before any
-network-capable behavior. See [docs/roadmap.md](docs/roadmap.md).
+The next milestone defines the simulated graph scenario schema. See
+[docs/roadmap.md](docs/roadmap.md).
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). This project is licensed under the MIT License.
-

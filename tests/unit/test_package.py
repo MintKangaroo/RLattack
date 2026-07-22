@@ -1,5 +1,9 @@
-from rlattack import __version__
+import rlattack
 
 
 def test_package_version() -> None:
-    assert __version__ == "0.1.0"
+    assert rlattack.__version__ == "0.1.0"
+
+
+def test_package_documents_simulation_scope() -> None:
+    assert "simulated attack graphs" in (rlattack.__doc__ or "")

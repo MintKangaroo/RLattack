@@ -1,6 +1,5 @@
 # API
 
-No HTTP API exists in the foundation milestone. When introduced, the API will expose
-OpenAPI documentation, validate all request data with Pydantic v2, use a consistent
-error envelope, and provide liveness and readiness health checks.
-
+No HTTP API exists in the foundation milestone. A future FastAPI dashboard is optional and
+will present local experiment metrics and explanations only. It must not expose endpoints for
+scanning, exploitation, shell execution, or control of external systems.

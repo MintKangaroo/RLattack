@@ -1,23 +1,33 @@
 # Threat Model
 
-## Assets
+## Safety objective
 
-Operator authorization records, target allowlists, scan or analysis results, audit
-events, service credentials, and integration tokens are sensitive assets.
+RLAttack studies decision-making over synthetic security graphs without creating a route to
+operate on real systems. Security-flavored actions are simulator events only.
 
-## Trust boundaries
+## Prohibited capabilities
 
-Future boundaries include HTTP clients, workers, PostgreSQL, Redis, external tools, and
-third-party integrations. All data crossing a boundary is untrusted.
+- network discovery or scanning;
+- exploit-framework or payload execution;
+- real credential authentication or collection;
+- local or remote shell execution;
+- persistence, evasion, destructive behavior, or data exfiltration; and
+- import of live target identifiers or actionable exploit material.
 
-## Initial controls
+## Planned trust boundaries
 
-- No network-capable functionality in the foundation milestone
-- Secrets excluded through `.gitignore`; placeholders only in `.env.example`
-- Read-only GitHub Actions permissions
-- Static analysis includes common Python security rules
+Scenario files, experiment configuration, sanitized ThreatGraph exports, saved policies, and
+optional local cyber-range adapters are untrusted inputs. They must be validated before use.
+Dashboard views, if implemented, are observability surfaces rather than control planes for
+real infrastructure.
 
-Before target-facing features ship, a central validator must accept only localhost,
-RFC1918/Docker networks, or explicit allowlist entries; reject public and unauthorized
-targets; prevent DNS rebinding and ambiguous address forms; and emit redacted audit logs.
+## Foundation controls
 
+- no network-capable production code;
+- no subprocess or shell integration;
+- secrets and generated artifacts excluded from version control;
+- read-only GitHub Actions permissions; and
+- static analysis includes common Python security rules.
+
+Later milestones must preserve these constraints and add tests proving that simulator actions
+cannot address external systems.

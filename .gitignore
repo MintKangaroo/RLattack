@@ -7,10 +7,15 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+artifacts/
+runs/
+mlruns/
+*.pt
+*.pth
+*.zip
 dist/
 build/
 *.egg-info/
 .idea/
 .vscode/
 .DS_Store
-

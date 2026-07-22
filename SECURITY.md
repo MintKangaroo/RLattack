@@ -11,17 +11,18 @@ target information. Use the repository host's private security-advisory feature.
 is unavailable, contact the maintainers privately through a verified project profile.
 Expect acknowledgement within five business days.
 
-## Authorized-use boundary
+## Simulation-only boundary
 
-This software is designed only for operator-owned systems, local or Docker labs, CTFs,
-educational cyber ranges, and explicitly authorized environments. Unauthorized scanning,
-public-range discovery, credential theft, persistence, evasion, malware deployment,
-data destruction, and data exfiltration are prohibited.
+RLAttack is designed for deterministic simulated graphs and explicitly local cyber-range
+adapters. It is not a scanner or exploitation system. Network discovery, public target
+access, real credential use, remote shells, persistence, evasion, malware deployment, data
+destruction, and data exfiltration are prohibited and outside the architecture.
 
-Future target-facing code must deny public or unregistered targets by default, permit
-localhost, RFC1918, Docker networks, or explicit allowlist entries only, and record
-redacted audit events for rejected requests.
+Contributions must not add wrappers for Nmap, exploit frameworks, shell commands, or other
+real-system attack mechanisms. Security action names must resolve only to validated simulator
+state transitions. Local cyber-range adapters must be explicit, isolated, and incapable of
+addressing public targets.
 
 Never submit real credentials, tokens, cookies, private keys, personal information, or
-raw authentication material in issues, logs, fixtures, or commits.
-
+live target data in issues, logs, fixtures, scenarios, or commits. ThreatGraph fixtures must
+be anonymized and stripped of actionable risk material.
