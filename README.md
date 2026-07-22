@@ -9,8 +9,8 @@ RLAttack은 결정론적 시뮬레이션 네트워크와 취약점 그래프 안
 동일한 Scenario와 Seed는 항상 동일한 Trajectory를 생성하므로 알고리즘 비교와 Ablation
 실험을 검증할 수 있습니다.
 
-> 현재 상태: 1단계 프로젝트 기반만 구현되어 있습니다. Scenario 모델, Gymnasium 환경,
-> Agent, 학습 파이프라인은 이후 단계에서 구현합니다.
+> 현재 상태: 2단계 Graph Scenario Schema까지 구현되어 있습니다. Gymnasium 환경, Agent,
+> 학습 파이프라인은 이후 단계에서 구현합니다.
 
 ## 안전 범위
 
@@ -138,7 +138,8 @@ CI에서는 짧은 Smoke Experiment만 실행하고, 장기 학습은 별도 Res
 
 ## 현재 한계
 
-- Scenario Schema와 Gymnasium Environment가 아직 없습니다.
+- Scenario Schema와 NetworkX Graph 변환이 구현되어 있습니다.
+- Gymnasium Environment는 아직 없습니다.
 - Baseline Agent와 학습 Agent가 아직 없습니다.
 - Training, Evaluation, Explainability, Integration Code가 아직 없습니다.
 - 선언된 선택 의존성은 해당 단계가 시작될 때까지 CI에서 사용하지 않습니다.
