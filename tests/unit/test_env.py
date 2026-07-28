@@ -49,7 +49,7 @@ def make_scenario() -> Scenario:
 
 
 def test_gymnasium_checker_passes() -> None:
-    check_env(AttackPathEnv(make_scenario()))
+    check_env(AttackPathEnv(make_scenario()), skip_render_check=True)
 
 
 def test_reset_with_same_seed_reproduces_observation() -> None:

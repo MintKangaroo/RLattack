@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The project is pre-alpha. Security fixes are applied to the latest `main` branch.
+The project is in alpha. Security fixes are applied to the latest `main` branch.
 
 ## Reporting a vulnerability
 
