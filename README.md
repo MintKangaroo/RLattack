@@ -173,6 +173,7 @@ Scenario Schema / Generator
 - `rlattack.training`: 선택적 DQN/PPO 학습 Pipeline
 - `rlattack.evaluation`: 동일 Seed 기반 Agent Benchmark Metric
 - `rlattack.explain`: Action 근거·Episode Trace·Graph Overlay 데이터
+- `rlattack.adapter`: Sanitized ThreatGraph 파일 Import/Export
 
 Training·Dashboard 계층은 Core Domain에 의존하지만, Core는 Stable-Baselines3·FastAPI·외부
 SDK에 의존하지 않습니다.
@@ -213,7 +214,7 @@ Unseen Scenario 성능입니다.
 8. 설정 가능한 Reward 실험 — 완료
 9. 재현 가능한 Evaluation — 완료
 10. Policy Explainability 및 Graph Overlay — 완료
-11. Sanitized ThreatGraph Scenario Adapter
+11. Sanitized ThreatGraph Scenario Adapter — 완료
 12. 실험 방법론·한계·윤리·안전 문서
 
 세부 계획은 [docs/roadmap.md](docs/roadmap.md), 다음 세션 인수인계는
