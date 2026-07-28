@@ -16,13 +16,14 @@
 4. Seed 기반 `small`/`medium`/`large` Scenario Generator
 5. Baseline Agent (completed)
 6. DQN Training Pipeline (completed; optional dependencies)
+7. PPO Benchmark Pipeline (completed; optional dependencies)
 
 ## 현재 변경사항
 
-`src/rlattack/training.py`에 `DQNTrainingConfig`, Optional Dependency Probe, Stable-
-Baselines3 기반 `train_dqn`을 제공합니다. Checkpoint, Evaluation Callback, TensorBoard
-기록 경로를 설정할 수 있습니다. PyTorch와 Stable-Baselines3는 CI에서 설치하지 않으며,
-장기 학습은 별도 명령으로 실행합니다.
+`src/rlattack/training.py`에 `DQNTrainingConfig`, `PPOTrainingConfig`, Optional Dependency
+Probe, Stable-Baselines3 기반 `train_dqn`/`train_ppo`를 제공합니다. 두 알고리즘은 동일한
+Vectorized Environment, Checkpoint, Evaluation Callback, TensorBoard 기록 계약을 공유합니다.
+PyTorch와 Stable-Baselines3는 CI에서 설치하지 않으며, 장기 학습은 별도 명령으로 실행합니다.
 
 `src/rlattack/agents.py`에 다음 Baseline을 제공합니다.
 
@@ -42,11 +43,11 @@ make check
 
 ## 다음 작업
 
-1. DQN 변경을 `feat/dqn-training`에 커밋하고 원격에 push
+1. PPO 변경을 `feat/ppo-training`에 커밋하고 원격에 push
 2. 기능 브랜치를 `develop`에 통합
-3. `feat/ppo-training` 생성
-4. 동일 Metric의 PPO Benchmark Pipeline 구현
-5. 이후 Reward 실험, Evaluation, Explainability, Sanitized ThreatGraph Adapter 순서로 진행
+3. `feat/reward-strategies` 생성
+4. Sparse/Shaped/Risk-aware/Cost-aware Reward 전략 구현
+5. 이후 Evaluation, Explainability, Sanitized ThreatGraph Adapter 순서로 진행
 
 ## 주의사항
 

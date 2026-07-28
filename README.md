@@ -8,8 +8,8 @@ RLAttack은 실제 외부 시스템을 공격하지 않고, **결정론적 시�
 중단, Step Budget 소진 중 하나가 발생하면 Episode가 끝납니다. Scenario와 Seed가 같으면
 동일한 Trajectory가 생성되므로 DQN·PPO·Baseline의 비교 실험을 재현할 수 있습니다.
 
-> 현재 상태: 6단계 DQN Training Pipeline을 구현 중입니다. Scenario Schema, Gymnasium
-> Environment, Scenario Generator, Baseline Agent는 구현되어 있습니다.
+> 현재 상태: 7단계 PPO Benchmark Pipeline까지 구현되어 있습니다. Scenario Schema,
+> Gymnasium Environment, Scenario Generator, Baseline Agent, DQN Pipeline도 구현되어 있습니다.
 
 ![RLAttack 시뮬레이션 연구 플랫폼 개요](docs/assets/rlattack-overview.svg)
 
@@ -206,8 +206,8 @@ Unseen Scenario 성능입니다.
 3. Gymnasium 공격 경로 Environment — 완료
 4. 결정론적 Scenario Generator — 완료
 5. Baseline Agent — 완료
-6. DQN Training Pipeline — 진행 중
-7. PPO Benchmark Pipeline
+6. DQN Training Pipeline — 완료
+7. PPO Benchmark Pipeline — 완료
 8. 설정 가능한 Reward 실험
 9. 재현 가능한 Evaluation
 10. Policy Explainability 및 Graph Overlay
