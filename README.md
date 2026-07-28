@@ -24,10 +24,7 @@
 
 ---
 
-<picture>
-  <source media="(max-width: 700px)" srcset="docs/assets/dashboard-mobile.png">
-  <img src="docs/assets/dashboard.png" alt="RLAttack Simulation Observatory dashboard">
-</picture>
+<img src="docs/assets/dashboard-overview.png" alt="RLAttack Simulation Observatory overview">
 
 > 위 화면의 topology, reward, risk, benchmark, decision trace는 장식용 샘플이 아닙니다.
 > `AttackPathEnv`를 seed `42`로 실제 실행해 생성한 결과입니다.
@@ -42,6 +39,14 @@ seed가 언제나 같은 trajectory를 만들도록 합니다.
 | --- | --- | --- |
 | Scenario·seed·reward·budget을 명시적으로 기록합니다. | 모든 action의 유효성, reward, risk, 영향을 받은 node를 추적합니다. | Socket, scanner, exploit, shell, 실제 credential을 사용하지 않습니다. |
 | Random, Greedy, Rule-based, Graph Oracle, DQN, PPO를 같은 환경에서 비교합니다. | Graph overlay와 decision trace를 HTML·JSON으로 내보냅니다. | Dashboard도 loopback 주소에서 simulation만 실행합니다. |
+
+## 한눈에 보는 실행 흐름
+
+<img src="docs/assets/rlattack-overview.svg" alt="Scenario에서 dashboard output까지 이어지는 RLAttack 실행 흐름">
+
+Scenario Generator가 검증된 graph를 만들고, Gymnasium Environment가 action mask와 state
+transition을 제공합니다. Baseline·DQN·PPO agent는 같은 environment를 사용하며, 결과는
+evaluation·explainability 계층을 거쳐 CLI, HTML report, dashboard에 동일하게 표시됩니다.
 
 ## 빠른 시작
 
@@ -96,6 +101,15 @@ make dashboard
 화면은 host topology와 oracle route, episode outcome, cumulative reward, detection risk,
 graph path cost, baseline success rate, 전체 decision trace를 함께 보여줍니다. `Export JSON`으로
 현재 실험을 그대로 저장할 수도 있습니다.
+
+<details>
+<summary><strong>전체 Dashboard 스크린샷 보기</strong></summary>
+<br>
+<picture>
+  <source media="(max-width: 700px)" srcset="docs/assets/dashboard-mobile.png">
+  <img src="docs/assets/dashboard.png" alt="RLAttack 전체 dashboard와 mobile layout">
+</picture>
+</details>
 
 > Dashboard는 `127.0.0.1`, `localhost`, `::1`에만 bind할 수 있습니다. 외부 host bind는
 > 코드 수준에서 거부합니다.
