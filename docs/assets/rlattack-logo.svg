@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="112" height="112" viewBox="0 0 112 112" role="img" aria-labelledby="title desc">
+  <title id="title">RLAttack logo</title>
+  <desc id="desc">A geometric node inside a simulation graph hexagon</desc>
+  <defs>
+    <linearGradient id="background" x1="15" y1="8" x2="96" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#173d2d"/>
+      <stop offset="1" stop-color="#08130f"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="30" y1="24" x2="83" y2="88" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#79ffb4"/>
+      <stop offset="1" stop-color="#20bd72"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="3" y="3" width="106" height="106" rx="28" fill="url(#background)" stroke="#3a7658" stroke-width="2"/>
+  <path d="M26 39 56 22l30 17v34L56 90 26 73V39Z" fill="#0b1b15" stroke="url(#accent)" stroke-width="3"/>
+  <path d="m41 47 15-8 15 8v18l-15 8-15-8V47Z" fill="#56f39a" filter="url(#glow)"/>
+  <circle cx="56" cy="56" r="6" fill="#07100e"/>
+  <path d="M56 39V28M41 47l-9-5M71 47l9-5M41 65l-9 5M71 65l9 5M56 73v11" stroke="#56f39a" stroke-width="2" stroke-linecap="round"/>
+</svg>

@@ -23,6 +23,10 @@ real-system attack mechanisms. Security action names must resolve only to valida
 state transitions. Local cyber-range adapters must be explicit, isolated, and incapable of
 addressing public targets.
 
+The optional dashboard is limited to `127.0.0.1`, `localhost`, or `::1` and accepts only
+synthetic scenario and experiment parameters. Do not remove this loopback restriction or add
+target addresses, commands, credentials, payloads, or arbitrary file paths to its API.
+
 Never submit real credentials, tokens, cookies, private keys, personal information, or
 live target data in issues, logs, fixtures, scenarios, or commits. ThreatGraph fixtures must
 be anonymized and stripped of actionable risk material.

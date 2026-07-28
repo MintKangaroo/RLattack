@@ -22,6 +22,7 @@ def test_evaluation_metrics_are_reproducible() -> None:
     assert first.episodes == 2
     assert first.success_rate == 1.0
     assert first.mean_steps > 0
+    assert first.mean_path_cost == 2.0
 
 
 def test_multiple_agents_share_benchmark_seeds() -> None:

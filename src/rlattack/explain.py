@@ -22,6 +22,7 @@ class ActionExplanation(BaseModel):
     reasons: tuple[str, ...]
     observation_summary: dict[str, int | float]
     reward_contribution: float
+    affected_nodes: tuple[str, ...] = ()
     action_probability: float | None = Field(default=None, ge=0.0, le=1.0)
     q_value: float | None = None
 
@@ -32,6 +33,7 @@ def explain_action(
     reward: float,
     info: dict[str, Any],
     *,
+    affected_nodes: tuple[str, ...] = (),
     action_probability: float | None = None,
     q_value: float | None = None,
 ) -> ActionExplanation:
@@ -65,6 +67,7 @@ def explain_action(
             "steps_remaining": budget,
         },
         reward_contribution=reward,
+        affected_nodes=affected_nodes,
         action_probability=action_probability,
         q_value=q_value,
     )
@@ -91,11 +94,12 @@ class EpisodeTrace:
         """Return sanitized node metadata for a visualization layer."""
 
         graph = scenario.to_networkx()
+        visited_nodes = {node_id for record in self.records for node_id in record.affected_nodes}
         return [
             {
                 "id": str(node),
                 "kind": str(data.get("kind", "unknown")),
-                "visited": node in self.actions,
+                "visited": node in visited_nodes,
             }
             for node, data in graph.nodes(data=True)
         ]

@@ -41,7 +41,7 @@ def test_random_agent_is_reproducible() -> None:
     assert first_actions == second_actions
 
 
-def test_rule_agent_advances_cursor_and_stops_when_no_rule_is_valid() -> None:
+def test_rule_agent_stops_when_no_configured_rule_is_valid() -> None:
     agent = RuleBasedAgent(rules=(Action.COLLECT_SIMULATED_OBJECTIVE,))
     observation = {"state": np.zeros(1, dtype=np.int8)}
     mask = np.zeros(len(Action), dtype=np.int8)

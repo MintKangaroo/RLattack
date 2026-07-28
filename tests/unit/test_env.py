@@ -87,6 +87,9 @@ def test_action_mask_and_simulated_success_path() -> None:
     assert reward > 0
     assert observation["discovered_hosts"].tolist() == [1, 1]
     assert info["action_name"] == "collect_simulated_objective"
+    assert info["affected_nodes"] == ("db", "collect")
+    assert info["path_cost"] == 1.0
+    assert info["valid_action"] is True
 
 
 def test_invalid_action_is_penalized_and_budget_truncates() -> None:

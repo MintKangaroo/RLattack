@@ -1,230 +1,347 @@
-# RLAttack
+<div align="center">
+  <img src="docs/assets/rlattack-logo.svg" width="92" alt="RLAttack logo">
+  <h1>RLAttack</h1>
+  <p><strong>See every decision. Trust every run.</strong></p>
+  <p>
+    실제 시스템을 건드리지 않고, 결정론적 공격 그래프 안에서<br>
+    강화학습 정책을 만들고 비교하고 설명하는 simulation observatory.
+  </p>
+  <p>
+    <a href="https://github.com/MintKangaroo/RLattack/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MintKangaroo/RLattack/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+    <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-56f39a?logo=python&logoColor=07100e">
+    <img alt="Coverage 100%" src="https://img.shields.io/badge/coverage-100%25-56f39a">
+    <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-71a7ff">
+    <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-d7e2dc"></a>
+  </p>
+  <p>
+    <a href="#빠른-시작">빠른 시작</a> ·
+    <a href="#simulation-observatory">대시보드</a> ·
+    <a href="docs/methodology.md">실험 방법론</a> ·
+    <a href="docs/api.md">API</a> ·
+    <a href="SECURITY.md">안전 정책</a>
+  </p>
+</div>
 
-RLAttack은 실제 외부 시스템을 공격하지 않고, **결정론적 시뮬레이션 네트워크와 취약점
-그래프** 안에서 강화학습 Agent의 공격 경로 탐색 전략을 연구하는 플랫폼입니다.
+---
 
-공격 계획을 재현 가능한 MDP(Markov Decision Process)로 모델링합니다. Agent는 현재 Episode
-상태를 관찰하고 하나의 시뮬레이션 Action을 선택한 뒤 Reward를 받습니다. 목표 달성, 자발적
-중단, Step Budget 소진 중 하나가 발생하면 Episode가 끝납니다. Scenario와 Seed가 같으면
-동일한 Trajectory가 생성되므로 DQN·PPO·Baseline의 비교 실험을 재현할 수 있습니다.
+<picture>
+  <source media="(max-width: 700px)" srcset="docs/assets/dashboard-mobile.png">
+  <img src="docs/assets/dashboard.png" alt="RLAttack Simulation Observatory dashboard">
+</picture>
 
-> 현재 상태: 7단계 PPO Benchmark Pipeline까지 구현되어 있습니다. Scenario Schema,
-> Gymnasium Environment, Scenario Generator, Baseline Agent, DQN Pipeline도 구현되어 있습니다.
+> 위 화면의 topology, reward, risk, benchmark, decision trace는 장식용 샘플이 아닙니다.
+> `AttackPathEnv`를 seed `42`로 실제 실행해 생성한 결과입니다.
 
-![RLAttack 시뮬레이션 연구 플랫폼 개요](docs/assets/rlattack-overview.svg)
+## 왜 RLAttack인가?
 
-*위 그림은 현재 구조를 설명하는 아키텍처 개요입니다. 실제 외부 시스템을 대상으로 하는
-화면이나 공격 도구의 Screenshot은 프로젝트 범위에 포함되지 않습니다.*
+보안 경로 탐색 연구는 재현하기 어렵고, 실제 인프라와 결합하면 안전성과 비교 가능성을 동시에
+잃기 쉽습니다. RLAttack은 문제를 검증된 합성 graph와 Gymnasium MDP로 제한해 같은 scenario와
+seed가 언제나 같은 trajectory를 만들도록 합니다.
 
-## 핵심 원칙
+| 재현 가능한 실험 | 설명 가능한 판단 | 안전한 연구 경계 |
+| --- | --- | --- |
+| Scenario·seed·reward·budget을 명시적으로 기록합니다. | 모든 action의 유효성, reward, risk, 영향을 받은 node를 추적합니다. | Socket, scanner, exploit, shell, 실제 credential을 사용하지 않습니다. |
+| Random, Greedy, Rule-based, Graph Oracle, DQN, PPO를 같은 환경에서 비교합니다. | Graph overlay와 decision trace를 HTML·JSON으로 내보냅니다. | Dashboard도 loopback 주소에서 simulation만 실행합니다. |
 
-| 원칙 | 내용 |
-| --- | --- |
-| 시뮬레이션 전용 | 모든 Action은 In-process 상태 전이이며 외부 통신을 수행하지 않음 |
-| 결정론 | 고정 Seed와 Scenario로 동일한 Trajectory 재현 |
-| 비교 가능성 | 동일 Environment·Metric으로 Baseline, DQN, PPO 비교 |
-| 설명 가능성 | 선택 Action, 방문 경로, Reward, Risk를 기록할 수 있는 구조 |
-| 안전한 확장 | Sanitized Scenario와 로컬 Cyber Range Adapter만 허용 |
+## 빠른 시작
 
-## 안전 범위
-
-RLAttack은 다음 기능을 구현하거나 호출하지 않습니다.
-
-- Nmap 또는 네트워크 Scanner
-- Exploit Framework, Payload, Malware 실행
-- 실제 Credential 인증·수집
-- 로컬·원격 Shell 및 임의 Subprocess 실행
-- Persistence, Evasion, 방어 제어 우회
-- 공용 네트워크 또는 실시간 대상 연결
-
-`scan_service`, `attempt_simulated_access`, `pivot_simulated_network` 등의 이름은 연구
-문제를 설명하기 위한 Domain Action입니다. 이 Action은 Scenario Graph와 Episode 상태만
-변경합니다.
-
-## 현재 구현
-
-### 1. Graph Scenario Schema
-
-Pydantic 모델과 NetworkX 변환을 제공합니다.
-
-- `Host`, `Service`, `Vulnerability`
-- `Credential`, `Privilege`, `Objective`
-- `SecurityControl`
-- `NetworkEdge`, `AccessEdge`, `PrivilegeEdge`
-- ID 중복 및 참조 무결성 검증
-- Port, Severity, Probability, Cost 범위 검증
-
-### 2. Gymnasium Environment
-
-`AttackPathEnv`는 메모리 기반 상태만 사용합니다.
-
-- Observation: Host, Service, Vulnerability, Credential, Privilege, Reachability
-- Detection Risk 및 남은 Step Budget
-- Action Mask와 잘못된 Action 거부
-- `terminated`와 `truncated` 구분
-- `reset(seed=...)` 기반 재현성
-- Gymnasium Environment Checker 테스트
-
-### 3. 결정론적 Scenario Generator
-
-```python
-from rlattack.generator import generate_scenario
-
-scenario = generate_scenario(size="medium", difficulty="hard", seed=42)
-```
-
-지원 조합:
-
-- 크기: `small`, `medium`, `large`
-- 난이도: `easy`, `medium`, `hard`
-- 고정 Seed에 따른 동일 Graph와 Risk 값
-- 난이도에 따른 Network Shortcut과 Security Control 변화
-
-### 4. Baseline Agent
-
-- `RandomAgent`: 유효한 Action Mask에서 균등 선택
-- `GreedyAgent`: 목표·권한 상승·접근·검증을 우선 선택
-- `RuleBasedAgent`: 정찰부터 목표 수집까지 명시적 순서 실행
-- `ShortestPathOracle`: 시뮬레이션 Graph의 Entry-Objective 경로를 참고하는 상한선
-
-## Environment Action
-
-| Action | 시뮬레이션 효과 |
-| --- | --- |
-| `discover_host` | 도달 가능한 Host를 발견 |
-| `scan_service` | Host의 Port와 Service 정보를 확인 |
-| `enumerate_service` | Service 상세 정보를 Observation에 추가 |
-| `validate_vulnerability` | 모델링된 Vulnerability를 검증 |
-| `attempt_simulated_access` | Access Edge와 Credential 전이를 시도 |
-| `escalate_simulated_privilege` | Privilege 전이를 적용 |
-| `pivot_simulated_network` | Network Edge를 따라 Reachability를 변경 |
-| `collect_simulated_objective` | 사전 조건을 만족하면 Objective 완료 |
-| `stop` | Episode를 자발적으로 종료 |
-
-## Reward 설계 방향
-
-Reward 값은 `rlattack.reward.build_reward_config`으로 선택하고 실험 설정으로 관리합니다.
-
-| 구분 | 예시 |
-| --- | --- |
-| Positive | Host 발견, Vulnerability 검증, Access, Privilege 상승, Objective 달성 |
-| Negative | 중복 Scan, 실패 Action, 노이즈 Action, Detection Risk, Step Cost |
-| 전략 | Sparse, Shaped, Risk-aware, Cost-aware |
-
-`RewardExperiment`가 Reward 전략, 파라미터, Scenario ID, Seed를 함께 기록합니다.
-
-## 설치
-
-Python 3.10 이상을 권장합니다.
+Python 3.10 이상이 필요합니다.
 
 ```bash
+git clone https://github.com/MintKangaroo/RLattack.git
+cd RLattack
+
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev]"
-```
-
-학습 또는 Dashboard 개발 시에만 선택 Extra를 설치합니다.
-
-```bash
-# Stable-Baselines3, PyTorch, TensorBoard
-python -m pip install -e ".[dev,training]"
-
-# 선택적 로컬 Dashboard
 python -m pip install -e ".[dev,dashboard]"
 ```
 
-`training` Extra는 용량이 큰 PyTorch를 포함하므로 기본 개발 설치와 분리되어 있습니다.
+첫 실험과 self-contained HTML report를 생성합니다.
 
-## 검증
+```bash
+rlattack demo
+```
+
+```text
+RLAttack deterministic experiment
+  scenario : generated-medium-hard-42
+  policy   : Greedy
+  outcome  : success
+  steps    : 38 / 64
+  reward   : 20.67
+  report   : .../artifacts/rlattack-report.html
+```
+
+생성된 `artifacts/rlattack-report.html`은 서버 없이 열 수 있고, 결과 데이터도 파일 안에
+포함됩니다.
+
+## Simulation Observatory
+
+인터랙티브 대시보드를 실행한 뒤 <http://127.0.0.1:8000>을 엽니다.
+
+```bash
+rlattack dashboard
+# 또는
+make dashboard
+```
+
+대시보드에서 다음 조건을 바꿔 즉시 다시 실행할 수 있습니다.
+
+- Scenario size: `small`, `medium`, `large`
+- Difficulty: `easy`, `medium`, `hard`
+- Policy: `random`, `greedy`, `rule-based`, `shortest-path`
+- Reward: `sparse`, `shaped`, `risk-aware`, `cost-aware`
+- Seed와 step budget
+
+화면은 host topology와 oracle route, episode outcome, cumulative reward, detection risk,
+graph path cost, baseline success rate, 전체 decision trace를 함께 보여줍니다. `Export JSON`으로
+현재 실험을 그대로 저장할 수도 있습니다.
+
+> Dashboard는 `127.0.0.1`, `localhost`, `::1`에만 bind할 수 있습니다. 외부 host bind는
+> 코드 수준에서 거부합니다.
+
+## CLI
+
+### 재현 가능한 report 만들기
+
+```bash
+rlattack demo \
+  --size medium \
+  --difficulty hard \
+  --seed 42 \
+  --agent greedy \
+  --reward risk-aware \
+  --step-budget 64 \
+  --episodes 8 \
+  --report artifacts/experiment.html \
+  --json artifacts/experiment.json
+```
+
+### Scenario JSON 내보내기
+
+```bash
+rlattack scenario \
+  --size large \
+  --difficulty medium \
+  --seed 7 \
+  --output artifacts/scenario.json
+```
+
+| Command | 역할 |
+| --- | --- |
+| `rlattack demo` | Episode와 4개 baseline benchmark를 실행하고 HTML report 생성 |
+| `rlattack scenario` | 검증된 deterministic scenario를 JSON으로 내보내기 |
+| `rlattack dashboard` | loopback 전용 interactive dashboard와 API 실행 |
+| `rlattack --version` | 설치된 package version 확인 |
+
+`python -m rlattack`도 같은 CLI를 실행합니다.
+
+## Python API
+
+### Scenario와 environment
+
+```python
+import numpy as np
+
+from rlattack.env import AttackPathEnv
+from rlattack.generator import generate_scenario
+
+scenario = generate_scenario(size="medium", difficulty="hard", seed=42)
+env = AttackPathEnv(scenario, step_budget=64)
+
+observation, info = env.reset(seed=42)
+action = np.int64(np.flatnonzero(info["action_mask"])[0])
+observation, reward, terminated, truncated, info = env.step(action)
+```
+
+### 설명 가능한 episode
+
+```python
+from rlattack.experiment import run_episode
+from rlattack.generator import generate_scenario
+
+scenario = generate_scenario("small", "easy", seed=7)
+result = run_episode(
+    scenario,
+    agent_name="shortest-path",
+    seed=7,
+    reward_strategy="shaped",
+)
+
+print(result.success, result.steps, result.path_cost)
+print(result.trace[-1].action)
+```
+
+### Dashboard view model
+
+```python
+from rlattack.experiment import ExperimentConfig, build_dashboard_data
+
+data = build_dashboard_data(
+    ExperimentConfig(
+        size="medium",
+        difficulty="hard",
+        seed=42,
+        agent="greedy",
+        reward_strategy="risk-aware",
+    )
+)
+```
+
+## Environment 설계
+
+Observation은 오직 agent가 현재까지 관찰한 simulation state로 구성됩니다.
+
+| Observation | 의미 |
+| --- | --- |
+| `discovered_hosts` / `reachable_hosts` | 발견·도달 상태 |
+| `known_services` | 확인한 service |
+| `validated_vulnerabilities` | 검증된 synthetic weakness |
+| `acquired_credentials` / `acquired_privileges` | simulation 내부 상태 |
+| `detection_risk` | 누적 normalized risk |
+| `steps_remaining` | 남은 episode budget |
+
+Action space는 고정된 9개 discrete action입니다.
+
+| Action | In-process 상태 전이 |
+| --- | --- |
+| `discover_host` | graph edge를 따라 새 host 발견 |
+| `scan_service` | 발견된 host의 다음 service 확인 |
+| `enumerate_service` | service 상세 관찰 및 detection risk 반영 |
+| `validate_vulnerability` | 모델링된 weakness 검증 |
+| `attempt_simulated_access` | access edge를 credential state로 전이 |
+| `escalate_simulated_privilege` | privilege edge 적용 |
+| `pivot_simulated_network` | 다음 host로 simulation path 확장 |
+| `collect_simulated_objective` | 조건을 만족한 objective 수집 |
+| `stop` | episode 자발적 종료 |
+
+각 step은 `action_mask`, `valid_action`, `affected_nodes`, `detection_risk`, 실제 graph
+`path_cost`를 `info`에 기록합니다. 목표 달성·자발적 중단은 `terminated`, budget 소진은
+`truncated`입니다.
+
+## 아키텍처
+
+```mermaid
+flowchart LR
+    A[Scenario Schema] --> B[Deterministic Generator]
+    B --> C[Gymnasium Environment]
+    C --> D[Baseline Agents]
+    C --> E[DQN / PPO]
+    D --> F[Experiment Runner]
+    E --> F
+    F --> G[Evaluation]
+    F --> H[Explainability]
+    G --> I[CLI / HTML Report / Dashboard]
+    H --> I
+    J[Sanitized Adapter] --> A
+```
+
+| Module | 책임 |
+| --- | --- |
+| `rlattack.scenario` | Pydantic schema, reference integrity, NetworkX 변환 |
+| `rlattack.generator` | size·difficulty·seed 기반 synthetic graph |
+| `rlattack.env` | deterministic Gymnasium transition과 action mask |
+| `rlattack.agents` | Random, Greedy, Rule-based, Graph Oracle |
+| `rlattack.experiment` | episode trace와 dashboard view model의 단일 실행 엔진 |
+| `rlattack.evaluation` | 동일 seed 기반 benchmark metric |
+| `rlattack.explain` | action explanation과 visited-node overlay |
+| `rlattack.training` | optional Stable-Baselines3 DQN/PPO pipeline |
+| `rlattack.adapter` | live identifier를 거부하는 sanitized file adapter |
+| `rlattack.report` / `dashboard` | portable HTML report와 loopback API |
+
+자세한 경계와 데이터 흐름은 [Architecture](docs/architecture.md)를 참고하세요.
+
+## Benchmark와 reward
+
+내장 baseline은 동일한 scenario·seed·step budget에서 평가됩니다.
+
+- `Random`: 유효 action을 균등 표본화하는 하한선
+- `Greedy`: 목표·권한·접근·검증을 우선하는 진행 중심 policy
+- `Rule-based`: 명시적인 reconnaissance-to-objective 순서
+- `Graph Oracle`: static host graph의 최단 route를 참고하는 상한선
+
+Reward strategy는 실험 목적에 따라 교체할 수 있습니다.
+
+| Strategy | 초점 |
+| --- | --- |
+| `sparse` | objective 달성 중심 |
+| `shaped` | 발견·검증·접근·권한 상승에 중간 보상 |
+| `risk-aware` | detection risk를 더 크게 감점 |
+| `cost-aware` | step과 중복 action 비용을 더 크게 감점 |
+
+공통 metric은 success rate, mean steps, cumulative reward, terminal detection risk,
+weighted graph path cost입니다. 전체 프로토콜과 한계는
+[Experimental Methodology](docs/methodology.md)에 정리되어 있습니다.
+
+## DQN / PPO 학습
+
+PyTorch와 Stable-Baselines3는 선택 dependency입니다.
+
+```bash
+python -m pip install -e ".[training]"
+```
+
+`train_dqn`과 `train_ppo`는 vectorized environment, checkpoint, evaluation callback,
+TensorBoard log 계약을 공유합니다. 장기 학습은 CI에서 실행하지 않습니다.
+
+## 품질 게이트
 
 ```bash
 make check
 ```
 
-현재 품질 게이트는 다음을 수행합니다.
+- Ruff lint + format
+- strict mypy
+- 65 deterministic tests
+- package statement coverage 100%
+- Gymnasium environment checker
+- FastAPI dashboard route와 loopback bind test
 
-- Ruff lint 및 Format 검사
-- strict mypy Type Check
-- pytest
-- `rlattack` 패키지 커버리지 100%
-- Gymnasium Environment Checker
+CI는 Python 3.12에서 동일한 gate를 실행합니다.
 
-CI에서는 짧은 Smoke Test만 실행하고 장기 Training은 별도 Research 명령으로 실행합니다.
+## 안전 범위
 
-## 아키텍처
+RLAttack의 security 용어는 연구 domain을 표현할 뿐이며 모두 메모리 안의 상태 전이입니다.
 
-```text
-Scenario Schema / Generator
-            |
-            v
-결정론적 Gymnasium Environment <---- Baseline / DQN / PPO Agent
-            |
-            +---- Evaluation / Metrics
-            +---- Explainability / Graph Overlay
-            +---- Checkpoint / TensorBoard / MLflow
-```
+**포함하지 않는 기능**
 
-주요 Package 역할:
+- Nmap 또는 network scanner
+- exploit framework, payload, malware
+- 실제 credential 인증·수집
+- local/remote shell과 임의 subprocess
+- persistence, evasion, destructive action, exfiltration
+- public network 또는 live target 연결
 
-- `rlattack.scenario`: 검증된 Graph Domain 모델
-- `rlattack.generator`: 고정 Seed Scenario 생성
-- `rlattack.env`: Gymnasium 상태 전이와 Action Mask
-- `rlattack.agents`: 비교용 Baseline Policy
-- `rlattack.training`: 선택적 DQN/PPO 학습 Pipeline
-- `rlattack.evaluation`: 동일 Seed 기반 Agent Benchmark Metric
-- `rlattack.explain`: Action 근거·Episode Trace·Graph Overlay 데이터
-- `rlattack.adapter`: Sanitized ThreatGraph 파일 Import/Export
+외부 자료는 [sanitized adapter](src/rlattack/adapter.py)를 통해서만 가져오며 IP, URL,
+domain, password, token, exploit/payload 필드를 거부합니다. 자세한 내용은
+[Security Policy](SECURITY.md)와 [Threat Model](docs/threat-model.md)을 확인하세요.
 
-Training·Dashboard 계층은 Core Domain에 의존하지만, Core는 Stable-Baselines3·FastAPI·외부
-SDK에 의존하지 않습니다.
+## 프로젝트 상태
 
-## 재현 가능한 Benchmark
+- [x] Validated graph scenario schema
+- [x] Deterministic Gymnasium environment
+- [x] Small / medium / large scenario generator
+- [x] Four baseline policies
+- [x] DQN / PPO training pipeline
+- [x] Four reward strategies
+- [x] Reproducible evaluation and explainability
+- [x] Sanitized ThreatGraph adapter
+- [x] CLI, portable HTML report, interactive dashboard
+- [x] Desktop and mobile dashboard verification
 
-Benchmark 보고서에는 다음 정보를 기록합니다.
+현재 `v0.2.0`은 연구용 end-to-end workflow를 제공합니다. 실제 환경의 다양성을 합성 graph가
+완전히 대표하지 않으며, explainability output은 인과적 설명이나 보안 보장을 의미하지 않습니다.
 
-- Scenario 크기와 난이도
-- Scenario ID와 Generator Seed
-- Algorithm 및 Reward Strategy
-- Training Budget과 Evaluation Seed
-- Environment 버전과 의존성 버전
+## 문서
 
-핵심 Metric은 Success Rate, 평균 Step, Cumulative Reward, Detection Risk, Path Cost,
-Unseen Scenario 성능입니다.
+- [Architecture](docs/architecture.md)
+- [Dashboard/API](docs/api.md)
+- [Experimental Methodology](docs/methodology.md)
+- [Threat Model](docs/threat-model.md)
+- [Roadmap](docs/roadmap.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
 
-## 브랜치 운영
+## License
 
-- `main`: 항상 실행 가능한 안정 버전
-- `develop`: 다음 Release 통합
-- `feat/<기능명>`: 기능별 작업
-- `fix/<문제명>`: Bug Fix
-- `docs/<문서명>`: 문서 변경
-
-기능은 `develop`에서 분기하고 기능 브랜치에서 검증한 뒤 Pull Request로 `develop`에
-통합합니다. `main`과 `develop`에 직접 Push하지 않습니다.
-
-## 로드맵
-
-1. 프로젝트 초기화 및 품질 게이트 — 완료
-2. Graph Scenario Schema — 완료
-3. Gymnasium 공격 경로 Environment — 완료
-4. 결정론적 Scenario Generator — 완료
-5. Baseline Agent — 완료
-6. DQN Training Pipeline — 완료
-7. PPO Benchmark Pipeline — 완료
-8. 설정 가능한 Reward 실험 — 완료
-9. 재현 가능한 Evaluation — 완료
-10. Policy Explainability 및 Graph Overlay — 완료
-11. Sanitized ThreatGraph Scenario Adapter — 완료
-12. 실험 방법론·한계·윤리·안전 문서 — 완료
-
-세부 계획은 [docs/roadmap.md](docs/roadmap.md), 다음 세션 인수인계는
-[HANDOFF.md](HANDOFF.md)를 참고하세요.
-
-전체 실험 설계는 [실험 방법론](docs/methodology.md)을 참고하세요.
-
-## 기여 및 보안
-
-기여 방법은 [CONTRIBUTING.md](CONTRIBUTING.md), 보안 범위는 [SECURITY.md](SECURITY.md),
-Threat Model은 [docs/threat-model.md](docs/threat-model.md)을 참고하세요.
-
-이 프로젝트는 MIT License를 따릅니다.
+[MIT](LICENSE) © AI Security Lab Contributors
