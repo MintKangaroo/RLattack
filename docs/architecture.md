@@ -3,8 +3,8 @@
 ## Current state
 
 The foundation consists of a typed Python package under `src/rlattack`, validated scenario
-models, unit tests, and a CI quality gate. It contains no simulator, agent, or
-network-capable code.
+models, a deterministic Gymnasium environment, unit tests, and a CI quality gate. It contains
+no agent, subprocess, or network-capable code.
 
 ## Planned package boundaries
 
