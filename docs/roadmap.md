@@ -3,7 +3,7 @@
 1. Initialize the Python research environment and quality gates. (completed)
 2. Define the simulated network graph scenario schema. (completed)
 3. Implement the Gymnasium attack-path environment. (completed)
-4. Add deterministic small, medium, and large scenario generators.
+4. Add deterministic small, medium, and large scenario generators. (completed)
 5. Add random, greedy, shortest-path, and rule-based baseline agents.
 6. Add the DQN training pipeline.
 7. Add the PPO benchmark pipeline.
