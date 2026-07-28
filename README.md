@@ -215,10 +215,12 @@ Unseen Scenario 성능입니다.
 9. 재현 가능한 Evaluation — 완료
 10. Policy Explainability 및 Graph Overlay — 완료
 11. Sanitized ThreatGraph Scenario Adapter — 완료
-12. 실험 방법론·한계·윤리·안전 문서
+12. 실험 방법론·한계·윤리·안전 문서 — 완료
 
 세부 계획은 [docs/roadmap.md](docs/roadmap.md), 다음 세션 인수인계는
 [HANDOFF.md](HANDOFF.md)를 참고하세요.
+
+전체 실험 설계는 [실험 방법론](docs/methodology.md)을 참고하세요.
 
 ## 기여 및 보안
 
