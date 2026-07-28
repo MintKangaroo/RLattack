@@ -113,6 +113,7 @@ class Scenario(ScenarioModel):
     id: Identifier
     name: str
     version: str = "1"
+    entry_host_ids: tuple[Identifier, ...] = ()
     hosts: tuple[Host, ...] = ()
     services: tuple[Service, ...] = ()
     vulnerabilities: tuple[Vulnerability, ...] = ()
@@ -144,6 +145,11 @@ class Scenario(ScenarioModel):
                 raise ValueError(f"duplicate {kind} id")
             ids[kind] = set(record_ids)
 
+        self._require_refs(
+            "entry_host_ids",
+            ((host_id, "host") for host_id in self.entry_host_ids),
+            ids,
+        )
         self._require_refs(
             "service.host_id",
             ((record.host_id, "host") for record in self.services),
