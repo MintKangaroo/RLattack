@@ -3,7 +3,7 @@
 ## 현재 상태
 
 - 기준 브랜치: `develop`
-- 현재 작업 브랜치: `feat/baseline-agents`
+- 현재 작업 브랜치: `feat/dqn-training`
 - 원격 저장소: <https://github.com/MintKangaroo/RLattack>
 - 브랜치 정책: `main`은 안정 버전, `develop`은 릴리스 통합, 기능은 `feat/*`에서 작업
 - 실제 네트워크 통신·Subprocess·공격 도구 호출은 구현하지 않음
@@ -14,9 +14,15 @@
 2. Pydantic/NetworkX Graph Scenario Schema
 3. 결정론적 Gymnasium 공격 경로 Environment
 4. Seed 기반 `small`/`medium`/`large` Scenario Generator
-5. Baseline Agent 구현 중 (`feat/baseline-agents`)
+5. Baseline Agent (completed)
+6. DQN Training Pipeline (completed; optional dependencies)
 
 ## 현재 변경사항
+
+`src/rlattack/training.py`에 `DQNTrainingConfig`, Optional Dependency Probe, Stable-
+Baselines3 기반 `train_dqn`을 제공합니다. Checkpoint, Evaluation Callback, TensorBoard
+기록 경로를 설정할 수 있습니다. PyTorch와 Stable-Baselines3는 CI에서 설치하지 않으며,
+장기 학습은 별도 명령으로 실행합니다.
 
 `src/rlattack/agents.py`에 다음 Baseline을 제공합니다.
 
@@ -36,11 +42,11 @@ make check
 
 ## 다음 작업
 
-1. Baseline Agent 변경을 `feat/baseline-agents`에 커밋하고 원격에 push
+1. DQN 변경을 `feat/dqn-training`에 커밋하고 원격에 push
 2. 기능 브랜치를 `develop`에 통합
-3. `feat/dqn-training` 생성
-4. 짧은 Smoke Training, Checkpoint, Evaluation Callback, TensorBoard 기록 구현
-5. 이후 PPO, Reward 실험, Evaluation, Explainability, Sanitized ThreatGraph Adapter 순서로 진행
+3. `feat/ppo-training` 생성
+4. 동일 Metric의 PPO Benchmark Pipeline 구현
+5. 이후 Reward 실험, Evaluation, Explainability, Sanitized ThreatGraph Adapter 순서로 진행
 
 ## 주의사항
 
