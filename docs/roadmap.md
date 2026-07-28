@@ -6,7 +6,7 @@
 4. Add deterministic small, medium, and large scenario generators. (completed)
 5. Add random, greedy, shortest-path, and rule-based baseline agents. (completed)
 6. Add the DQN training pipeline. (completed)
-7. Add the PPO benchmark pipeline.
+7. Add the PPO benchmark pipeline. (completed)
 8. Add configurable reward strategies and experiment records.
 9. Add reproducible evaluation and generalization benchmarks.
 10. Add policy and graph explainability outputs.

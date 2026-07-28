@@ -31,6 +31,21 @@ class DQNTrainingConfig:
             raise ValueError("evaluation_frequency must be positive")
 
 
+@dataclass(frozen=True)
+class PPOTrainingConfig(DQNTrainingConfig):
+    """Reproducible settings for one PPO experiment."""
+
+    rollout_steps: int = 256
+    batch_size: int = 64
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.rollout_steps < 1:
+            raise ValueError("rollout_steps must be positive")
+        if self.batch_size < 1:
+            raise ValueError("batch_size must be positive")
+
+
 def training_dependencies_available() -> bool:
     """Return whether Stable-Baselines3 and PyTorch are installed."""
 
@@ -92,6 +107,66 @@ def train_dqn(  # pragma: no cover - exercised by the optional long-running trai
         total_timesteps=selected.total_timesteps,
         callback=callbacks,
         tb_log_name="rlattack-dqn",
+    )
+    model.save(str(selected.output_dir / "final"))
+    train_env.close()
+    eval_env.close()
+    return model
+
+
+def train_ppo(  # pragma: no cover - exercised by the optional long-running training job
+    env_factory: Callable[[], gym.Env[Any, Any]],
+    config: PPOTrainingConfig | None = None,
+) -> Any:
+    """Train PPO with the same vectorized environment and evaluation contract as DQN."""
+
+    selected = config or PPOTrainingConfig()
+    try:
+        from stable_baselines3 import PPO
+        from stable_baselines3.common.callbacks import (
+            CallbackList,
+            CheckpointCallback,
+            EvalCallback,
+        )
+        from stable_baselines3.common.vec_env import DummyVecEnv
+    except ImportError as error:
+        raise RuntimeError(
+            "PPO training requires the optional '.[training]' dependencies"
+        ) from error
+
+    selected.output_dir.mkdir(parents=True, exist_ok=True)
+    selected.tensorboard_log.mkdir(parents=True, exist_ok=True)
+    train_env = DummyVecEnv([env_factory])
+    eval_env = DummyVecEnv([env_factory])
+    callbacks = CallbackList(
+        [
+            CheckpointCallback(
+                save_freq=selected.checkpoint_frequency,
+                save_path=str(selected.output_dir),
+                name_prefix="rlattack-ppo",
+            ),
+            EvalCallback(
+                eval_env,
+                eval_freq=selected.evaluation_frequency,
+                best_model_save_path=str(selected.output_dir / "best"),
+                log_path=str(selected.output_dir / "evaluation"),
+                deterministic=True,
+            ),
+        ]
+    )
+    model = PPO(
+        "MultiInputPolicy",
+        train_env,
+        seed=selected.seed,
+        n_steps=selected.rollout_steps,
+        batch_size=selected.batch_size,
+        tensorboard_log=str(selected.tensorboard_log),
+        verbose=1,
+    )
+    model.learn(
+        total_timesteps=selected.total_timesteps,
+        callback=callbacks,
+        tb_log_name="rlattack-ppo",
     )
     model.save(str(selected.output_dir / "final"))
     train_env.close()
