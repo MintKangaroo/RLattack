@@ -16,6 +16,8 @@
 14. Add a CLI and portable self-contained HTML reports. (completed)
 15. Add a loopback-only interactive dashboard and experiment API. (completed)
 16. Verify desktop/mobile rendering and publish real dashboard screenshots. (completed)
+17. Make sanitized graph export fully anonymous and structure-preserving. (completed)
+18. Add dependency auditing and automated dependency update monitoring. (completed)
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

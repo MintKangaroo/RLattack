@@ -131,16 +131,28 @@ class ShortestPathOracle:
     scenario: Scenario
 
     def __post_init__(self) -> None:
+        if not self.scenario.hosts:
+            raise ValueError("graph oracle requires at least one host")
+        if not self.scenario.objectives:
+            raise ValueError("graph oracle requires at least one objective")
         graph = self.scenario.to_networkx()
         hosts = {host.id for host in self.scenario.hosts}
-        self.route = tuple(
-            node
-            for node in nx.shortest_path(
-                graph.subgraph(hosts),
-                self.scenario.entry_host_ids[0],
-                self.scenario.objectives[0].host_id,
-            )
+        entry_host = (
+            self.scenario.entry_host_ids[0]
+            if self.scenario.entry_host_ids
+            else self.scenario.hosts[0].id
         )
+        try:
+            self.route = tuple(
+                node
+                for node in nx.shortest_path(
+                    graph.subgraph(hosts),
+                    entry_host,
+                    self.scenario.objectives[0].host_id,
+                )
+            )
+        except nx.NetworkXNoPath as error:
+            raise ValueError("graph oracle requires a path to the objective") from error
         self._objective_index = next(
             index
             for index, host in enumerate(self.scenario.hosts)

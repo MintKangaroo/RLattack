@@ -95,3 +95,7 @@ scenario size, difficulty, policy, reward, seed, budget뿐이며 target address�
 Scenario file, experiment input, policy checkpoint, sanitized export는 untrusted input입니다.
 Pydantic validation과 adapter sanitization을 통과해야 합니다. Dashboard는 observability와
 synthetic experiment control만 제공하며 실제 인프라의 control plane이 아닙니다.
+
+Sanitized export는 source Scenario의 ID를 그대로 쓰지 않고 Host, Service, Vulnerability ID를
+새 anonymous ID로 치환합니다. Import는 node 순서와 무관하게 reference를 복원하고, entry
+host와 weighted network edge를 보존합니다.

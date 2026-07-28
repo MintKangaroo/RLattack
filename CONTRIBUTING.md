@@ -20,6 +20,7 @@ Before committing, run:
 
 ```bash
 make check
+make audit
 ```
 
 Use Conventional Commits, such as `feat(env): add deterministic reset` or

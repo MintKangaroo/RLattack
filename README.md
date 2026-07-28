@@ -288,16 +288,19 @@ TensorBoard log 계약을 공유합니다. 장기 학습은 CI에서 실행하�
 
 ```bash
 make check
+make audit
 ```
 
 - Ruff lint + format
 - strict mypy
-- 65 deterministic tests
+- 67 deterministic tests
 - package statement coverage 100%
 - Gymnasium environment checker
 - FastAPI dashboard route와 loopback bind test
+- pip-audit dependency vulnerability check
 
-CI는 Python 3.12에서 동일한 gate를 실행합니다.
+CI는 Python 3.12에서 동일한 gate를 실행하고, Dependabot이 Python·GitHub Actions dependency를
+매주 확인합니다.
 
 ## 안전 범위
 
@@ -313,7 +316,8 @@ RLAttack의 security 용어는 연구 domain을 표현할 뿐이며 모두 메�
 - public network 또는 live target 연결
 
 외부 자료는 [sanitized adapter](src/rlattack/adapter.py)를 통해서만 가져오며 IP, URL,
-domain, password, token, exploit/payload 필드를 거부합니다. 자세한 내용은
+domain, password, token, exploit/payload 필드를 거부합니다. Export 시에는 원본 node ID를
+다시 익명화하면서 Host·Service·Vulnerability 구조와 weighted edge를 보존합니다. 자세한 내용은
 [Security Policy](SECURITY.md)와 [Threat Model](docs/threat-model.md)을 확인하세요.
 
 ## 프로젝트 상태

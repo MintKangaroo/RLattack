@@ -27,6 +27,9 @@ The optional dashboard is limited to `127.0.0.1`, `localhost`, or `::1` and acce
 synthetic scenario and experiment parameters. Do not remove this loopback restriction or add
 target addresses, commands, credentials, payloads, or arbitrary file paths to its API.
 
+Dependency advisories are checked in CI with `pip-audit`; Dependabot monitors Python and
+GitHub Actions updates. Contributors can run the same dependency check with `make audit`.
+
 Never submit real credentials, tokens, cookies, private keys, personal information, or
 live target data in issues, logs, fixtures, scenarios, or commits. ThreatGraph fixtures must
 be anonymized and stripped of actionable risk material.

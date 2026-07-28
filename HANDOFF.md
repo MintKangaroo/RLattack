@@ -6,7 +6,7 @@
 - 기준 브랜치: `develop`
 - 원격 저장소: <https://github.com/MintKangaroo/RLattack>
 - 실행 경계: synthetic graph와 in-process state transition만 허용
-- 품질 기준: Ruff, strict mypy, 65 tests, package coverage 100%
+- 품질 기준: Ruff, strict mypy, 67 tests, package coverage 100%
 
 ## 구현 완료
 
@@ -24,6 +24,8 @@
 12. Self-contained HTML report와 loopback-only FastAPI dashboard
 13. Desktop/mobile screenshot와 browser interaction verification
 14. Architecture, API, methodology, threat model, README 정비
+15. ThreatGraph export ID 재익명화와 구조 보존 round-trip
+16. pip-audit CI gate와 Python/GitHub Actions Dependabot
 
 ## 주요 명령
 
@@ -32,6 +34,7 @@ source .venv/bin/activate
 python -m pip install -e ".[dev,dashboard]"
 
 make check
+make audit
 rlattack demo
 rlattack dashboard
 ```

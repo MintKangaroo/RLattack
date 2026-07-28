@@ -1,4 +1,4 @@
-.PHONY: install demo dashboard lint format-check typecheck test check
+.PHONY: install demo dashboard lint format-check typecheck test audit check
 
 install:
 	python3 -m pip install -e ".[dev]"
@@ -20,5 +20,8 @@ typecheck:
 
 test:
 	python3 -m pytest
+
+audit:
+	python3 -m pip_audit --local --skip-editable
 
 check: lint format-check typecheck test
