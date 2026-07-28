@@ -103,7 +103,7 @@ scenario = generate_scenario(size="medium", difficulty="hard", seed=42)
 
 ## Reward 설계 방향
 
-Reward 값은 코드에 고정하지 않고 실험 설정으로 관리할 예정입니다.
+Reward 값은 `rlattack.reward.build_reward_config`으로 선택하고 실험 설정으로 관리합니다.
 
 | 구분 | 예시 |
 | --- | --- |
@@ -111,7 +111,7 @@ Reward 값은 코드에 고정하지 않고 실험 설정으로 관리할 예정
 | Negative | 중복 Scan, 실패 Action, 노이즈 Action, Detection Risk, Step Cost |
 | 전략 | Sparse, Shaped, Risk-aware, Cost-aware |
 
-각 실험은 Reward 전략, 파라미터, Scenario ID, Seed를 함께 기록합니다.
+`RewardExperiment`가 Reward 전략, 파라미터, Scenario ID, Seed를 함께 기록합니다.
 
 ## 설치
 
@@ -208,7 +208,7 @@ Unseen Scenario 성능입니다.
 5. Baseline Agent — 완료
 6. DQN Training Pipeline — 완료
 7. PPO Benchmark Pipeline — 완료
-8. 설정 가능한 Reward 실험
+8. 설정 가능한 Reward 실험 — 완료
 9. 재현 가능한 Evaluation
 10. Policy Explainability 및 Graph Overlay
 11. Sanitized ThreatGraph Scenario Adapter
