@@ -20,6 +20,7 @@
 8. Configurable Reward Strategies (completed)
 9. Reproducible Evaluation Benchmarks (completed)
 10. Policy Explainability and Graph Overlay (completed)
+11. Sanitized ThreatGraph Scenario Adapter (completed)
 
 ## 현재 변경사항
 
@@ -50,7 +51,7 @@ make check
 2. 기능 브랜치를 `develop`에 통합
 3. `feat/reward-strategies` 생성
 4. Sparse/Shaped/Risk-aware/Cost-aware Reward 전략 구현
-5. Explainability 구현 완료. 이후 Sanitized ThreatGraph Adapter와 실험 방법론 문서 순서로 진행
+5. ThreatGraph Adapter 구현 완료. 이후 실험 방법론·한계·윤리 문서 순서로 진행
 
 ## 주의사항
 
