@@ -9,7 +9,7 @@
 7. Add the PPO benchmark pipeline. (completed)
 8. Add configurable reward strategies and experiment records. (completed)
 9. Add reproducible evaluation and generalization benchmarks. (completed)
-10. Add policy and graph explainability outputs.
+10. Add policy and graph explainability outputs. (completed)
 11. Add a sanitized ThreatGraph scenario adapter.
 12. Document the experimental methodology, limitations, ethics, and safety scope.
 
