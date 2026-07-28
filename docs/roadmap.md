@@ -11,7 +11,7 @@
 9. Add reproducible evaluation and generalization benchmarks. (completed)
 10. Add policy and graph explainability outputs. (completed)
 11. Add a sanitized ThreatGraph scenario adapter. (completed)
-12. Document the experimental methodology, limitations, ethics, and safety scope.
+12. Document the experimental methodology, limitations, ethics, and safety scope. (completed)
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.
