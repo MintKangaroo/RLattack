@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">RLAttack 시뮬레이션 연구 플랫폼 개요</title>
+  <desc id="desc">Scenario Generator, Gymnasium Environment, Baseline 및 학습 Agent, Evaluation과 Explainability의 흐름</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#0b1220"/><stop offset="1" stop-color="#172554"/></linearGradient>
+    <linearGradient id="card" x1="0" x2="1"><stop stop-color="#172554"/><stop offset="1" stop-color="#1e3a8a"/></linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#93c5fd"/></marker>
+  </defs>
+  <rect width="1200" height="520" rx="24" fill="url(#bg)"/>
+  <text x="60" y="62" fill="#f8fafc" font-family="sans-serif" font-size="30" font-weight="700">RLAttack 연구 플랫폼</text>
+  <text x="60" y="92" fill="#bfdbfe" font-family="sans-serif" font-size="16">결정론적 시뮬레이션에서 공격 경로 탐색 정책을 재현 가능하게 비교</text>
+  <g font-family="sans-serif" fill="#f8fafc">
+    <rect x="60" y="145" width="235" height="145" rx="16" fill="url(#card)" stroke="#60a5fa"/>
+    <text x="84" y="184" font-size="20" font-weight="700">Scenario</text>
+    <text x="84" y="214" font-size="15" fill="#dbeafe">Pydantic + NetworkX</text>
+    <text x="84" y="242" font-size="14" fill="#bfdbfe">Host · Service · Vulnerability</text>
+    <text x="84" y="265" font-size="14" fill="#bfdbfe">Credential · Privilege · Objective</text>
+    <rect x="340" y="145" width="235" height="145" rx="16" fill="url(#card)" stroke="#34d399"/>
+    <text x="364" y="184" font-size="20" font-weight="700">Gymnasium Env</text>
+    <text x="364" y="214" font-size="15" fill="#d1fae5">Observation · Action Mask</text>
+    <text x="364" y="242" font-size="14" fill="#a7f3d0">Detection Risk · Step Budget</text>
+    <text x="364" y="265" font-size="14" fill="#a7f3d0">메모리 상태 전이만 수행</text>
+    <rect x="620" y="145" width="235" height="145" rx="16" fill="url(#card)" stroke="#fbbf24"/>
+    <text x="644" y="184" font-size="20" font-weight="700">Agents</text>
+    <text x="644" y="214" font-size="15" fill="#fef3c7">Random · Greedy</text>
+    <text x="644" y="242" font-size="14" fill="#fde68a">Rule-based · Shortest-path</text>
+    <text x="644" y="265" font-size="14" fill="#fde68a">DQN · PPO (예정)</text>
+    <rect x="900" y="145" width="235" height="145" rx="16" fill="url(#card)" stroke="#c084fc"/>
+    <text x="924" y="184" font-size="20" font-weight="700">Research Output</text>
+    <text x="924" y="214" font-size="15" fill="#f3e8ff">Metrics · Checkpoints</text>
+    <text x="924" y="242" font-size="14" fill="#e9d5ff">Evaluation · Explainability</text>
+    <text x="924" y="265" font-size="14" fill="#e9d5ff">TensorBoard / MLflow (예정)</text>
+  </g>
+  <g stroke="#93c5fd" stroke-width="3" fill="none" marker-end="url(#arrow)">
+    <path d="M295 218 H335"/><path d="M575 218 H615"/><path d="M855 218 H895"/>
+  </g>
+  <rect x="60" y="355" width="1075" height="95" rx="16" fill="#0f172a" stroke="#475569"/>
+  <text x="88" y="392" fill="#f8fafc" font-family="sans-serif" font-size="18" font-weight="700">안전 경계</text>
+  <text x="88" y="421" fill="#cbd5e1" font-family="sans-serif" font-size="15">실제 Nmap·Exploit Framework·원격 Shell·공용 네트워크 연결 없음</text>
+  <text x="88" y="444" fill="#cbd5e1" font-family="sans-serif" font-size="15">모든 Action은 로컬 시뮬레이터 상태만 변경하며, 동일 Seed에서 동일 Trajectory를 생성</text>
+</svg>
