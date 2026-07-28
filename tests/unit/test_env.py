@@ -102,6 +102,8 @@ def test_invalid_action_is_penalized_and_budget_truncates() -> None:
     assert terminated is False
     assert truncated is True
     assert info["steps"] == 1
+    with pytest.raises(RuntimeError, match="reset"):
+        env.step(np.int64(Action.STOP))
 
 
 def test_invalid_action_value_and_constructor_inputs_are_rejected() -> None:

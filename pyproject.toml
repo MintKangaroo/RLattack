@@ -77,6 +77,10 @@ python_version = "3.10"
 strict = true
 mypy_path = "src"
 
+[[tool.mypy.overrides]]
+module = ["stable_baselines3", "stable_baselines3.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=rlattack --cov-report=term-missing --cov-fail-under=100"
 testpaths = ["tests"]

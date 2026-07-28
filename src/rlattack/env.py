@@ -123,6 +123,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._affected_nodes: tuple[str, ...] = ()
         self._steps = 0
         self._terminated = False
+        self._finished = False
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -138,8 +139,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         }
 
     def step(self, action: np.int64) -> tuple[Observation, float, bool, bool, dict[str, Any]]:
-        if self._terminated:
-            raise RuntimeError("step() called after episode termination; call reset() first")
+        if self._finished:
+            raise RuntimeError("step() called after episode completion; call reset() first")
         action_id = self._validate_action(action)
         valid = bool(self.action_mask()[action_id])
         self._affected_nodes = ()
@@ -169,6 +170,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         risk_penalty = self._detection_risk * self.reward_config.detection_risk
         reward += risk_penalty
         truncated = self._steps >= self.step_budget and not self._terminated
+        self._finished = self._terminated or truncated
         info: dict[str, Any] = {
             "action_mask": self.action_mask(),
             "action_name": ACTION_NAMES[action_id],

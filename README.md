@@ -296,7 +296,9 @@ python -m pip install -e ".[training]"
 ```
 
 `train_dqn`과 `train_ppo`는 vectorized environment, checkpoint, evaluation callback,
-TensorBoard log 계약을 공유합니다. 장기 학습은 CI에서 실행하지 않습니다.
+TensorBoard log 계약을 공유합니다. Train·evaluation environment는 Stable-Baselines3
+`Monitor`로 동일하게 기록되며, CPU 최소 학습과 final checkpoint 생성을 실제 검증했습니다.
+장기 학습은 CI에서 실행하지 않습니다.
 
 ## 품질 게이트
 

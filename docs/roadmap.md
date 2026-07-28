@@ -18,6 +18,7 @@
 16. Verify desktop/mobile rendering and publish real dashboard screenshots. (completed)
 17. Make sanitized graph export fully anonymous and structure-preserving. (completed)
 18. Add dependency auditing and automated dependency update monitoring. (completed)
+19. Verify monitored DQN and PPO CPU training and final checkpoints. (completed)
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

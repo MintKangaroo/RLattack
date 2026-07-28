@@ -26,6 +26,7 @@
 14. Architecture, API, methodology, threat model, README 정비
 15. ThreatGraph export ID 재익명화와 구조 보존 round-trip
 16. pip-audit CI gate와 Python/GitHub Actions Dependabot
+17. DQN/PPO CPU smoke training, Monitor evaluation, final checkpoint 검증
 
 ## 주요 명령
 
@@ -47,6 +48,8 @@ Dashboard: <http://127.0.0.1:8000>
 - `evaluate_agent`는 각 episode 전에 agent를 reset해 policy state 누출을 방지합니다.
 - Environment `info`는 `affected_nodes`, `valid_action`, `path_cost`, `detection_risk`를
   제공합니다.
+- Episode는 `terminated`와 budget `truncated` 모두에서 reset 전 추가 step을 거부합니다.
+- DQN/PPO train·evaluation environment는 Stable-Baselines3 `Monitor`로 감쌉니다.
 - Dashboard는 외부 asset/CDN이 없고 `127.0.0.1`, `localhost`, `::1` 외 bind를 거부합니다.
 - `docs/assets/dashboard.png`와 `dashboard-mobile.png`는 seed 42 실제 실행 화면입니다.
 

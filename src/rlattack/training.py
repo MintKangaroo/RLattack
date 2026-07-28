@@ -64,13 +64,14 @@ def train_dqn(  # pragma: no cover - exercised by the optional long-running trai
 
     selected = config or DQNTrainingConfig()
     try:
-        from stable_baselines3 import DQN  # type: ignore
-        from stable_baselines3.common.callbacks import (  # type: ignore
+        from stable_baselines3 import DQN
+        from stable_baselines3.common.callbacks import (
             CallbackList,
             CheckpointCallback,
             EvalCallback,
         )
-        from stable_baselines3.common.vec_env import DummyVecEnv  # type: ignore
+        from stable_baselines3.common.monitor import Monitor
+        from stable_baselines3.common.vec_env import DummyVecEnv
     except ImportError as error:
         raise RuntimeError(
             "DQN training requires the optional '.[training]' dependencies"
@@ -78,8 +79,8 @@ def train_dqn(  # pragma: no cover - exercised by the optional long-running trai
 
     selected.output_dir.mkdir(parents=True, exist_ok=True)
     selected.tensorboard_log.mkdir(parents=True, exist_ok=True)
-    train_env = DummyVecEnv([env_factory])
-    eval_env = DummyVecEnv([env_factory])
+    train_env = DummyVecEnv([lambda: Monitor(env_factory())])
+    eval_env = DummyVecEnv([lambda: Monitor(env_factory())])
     callbacks = CallbackList(
         [
             CheckpointCallback(
@@ -128,6 +129,7 @@ def train_ppo(  # pragma: no cover - exercised by the optional long-running trai
             CheckpointCallback,
             EvalCallback,
         )
+        from stable_baselines3.common.monitor import Monitor
         from stable_baselines3.common.vec_env import DummyVecEnv
     except ImportError as error:
         raise RuntimeError(
@@ -136,8 +138,8 @@ def train_ppo(  # pragma: no cover - exercised by the optional long-running trai
 
     selected.output_dir.mkdir(parents=True, exist_ok=True)
     selected.tensorboard_log.mkdir(parents=True, exist_ok=True)
-    train_env = DummyVecEnv([env_factory])
-    eval_env = DummyVecEnv([env_factory])
+    train_env = DummyVecEnv([lambda: Monitor(env_factory())])
+    eval_env = DummyVecEnv([lambda: Monitor(env_factory())])
     callbacks = CallbackList(
         [
             CheckpointCallback(
