@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The project is pre-alpha. Security fixes are applied to the latest `main` branch.
+The project is in alpha. Security fixes are applied to the latest `main` branch.
 
 ## Reporting a vulnerability
 
@@ -22,6 +22,13 @@ Contributions must not add wrappers for Nmap, exploit frameworks, shell commands
 real-system attack mechanisms. Security action names must resolve only to validated simulator
 state transitions. Local cyber-range adapters must be explicit, isolated, and incapable of
 addressing public targets.
+
+The optional dashboard is limited to `127.0.0.1`, `localhost`, or `::1` and accepts only
+synthetic scenario and experiment parameters. Do not remove this loopback restriction or add
+target addresses, commands, credentials, payloads, or arbitrary file paths to its API.
+
+Dependency advisories are checked in CI with `pip-audit`; Dependabot monitors Python and
+GitHub Actions updates. Contributors can run the same dependency check with `make audit`.
 
 Never submit real credentials, tokens, cookies, private keys, personal information, or
 live target data in issues, logs, fixtures, scenarios, or commits. ThreatGraph fixtures must

@@ -28,4 +28,5 @@ jobs:
         run: mypy .
       - name: Test
         run: pytest
-
+      - name: Dependency audit
+        run: pip-audit --local --skip-editable

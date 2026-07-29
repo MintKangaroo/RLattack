@@ -1,5 +1,75 @@
-# API
+# Dashboard and API
 
-No HTTP API exists in the foundation milestone. A future FastAPI dashboard is optional and
-will present local experiment metrics and explanations only. It must not expose endpoints for
-scanning, exploitation, shell execution, or control of external systems.
+RLAttack `v0.2.0`은 simulation 결과를 탐색하는 local FastAPI dashboard를 제공합니다.
+이 API가 실행하는 것은 검증된 `AttackPathEnv`뿐이며 scanner, shell, 외부 target client는
+포함하지 않습니다.
+
+## 실행
+
+```bash
+python -m pip install -e ".[dashboard]"
+rlattack dashboard
+```
+
+기본 주소는 <http://127.0.0.1:8000>입니다. 안전 경계를 유지하기 위해 host는
+`127.0.0.1`, `localhost`, `::1`만 허용합니다.
+
+## Endpoint
+
+### `GET /`
+
+Interactive Simulation Observatory HTML을 반환합니다. 모든 CSS와 JavaScript는 문서에
+포함되어 있고 외부 CDN을 호출하지 않습니다.
+
+### `GET /health`
+
+```json
+{
+  "status": "ok",
+  "mode": "simulation-only"
+}
+```
+
+### `GET /api/experiment`
+
+새 deterministic episode와 baseline benchmark를 실행합니다.
+
+| Query | Type | Default | 허용 값 |
+| --- | --- | --- | --- |
+| `size` | string | `medium` | `small`, `medium`, `large` |
+| `difficulty` | string | `hard` | `easy`, `medium`, `hard` |
+| `seed` | integer | `42` | 모든 integer |
+| `agent` | string | `greedy` | `random`, `greedy`, `rule-based`, `shortest-path` |
+| `reward_strategy` | string | `risk-aware` | `sparse`, `shaped`, `risk-aware`, `cost-aware` |
+| `step_budget` | integer | `64` | 1 이상 |
+| `benchmark_episodes` | integer | `8` | 1 이상 |
+
+예:
+
+```bash
+curl "http://127.0.0.1:8000/api/experiment?size=small&difficulty=easy&seed=7&agent=shortest-path&reward_strategy=shaped&step_budget=32&benchmark_episodes=4"
+```
+
+Response에는 다음 top-level field가 있습니다.
+
+- `config`: 결과를 재현하는 전체 입력
+- `scenario`: host node, network edge, oracle route와 graph 통계
+- `episode`: outcome, reward, risk, path cost, affected node, decision trace
+- `benchmarks`: 네 baseline의 success rate와 평균 metric
+- `reward`: 선택 strategy의 명시적 reward parameter
+- `safety`: simulation-only capability 선언
+
+잘못된 enum이나 budget은 HTTP `422`를 반환합니다.
+
+## Portable report
+
+HTTP server 없이 같은 view model을 보는 report도 만들 수 있습니다.
+
+```bash
+rlattack demo \
+  --report artifacts/experiment.html \
+  --json artifacts/experiment.json
+```
+
+HTML은 self-contained이고 실험 결과를 내부에 포함합니다. Offline report에서는 기존 결과를
+탐색하고 JSON으로 저장할 수 있으며, 새 실험 실행은 local dashboard에서만 가능합니다.

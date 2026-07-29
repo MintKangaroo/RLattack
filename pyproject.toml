@@ -4,14 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rlattack"
-version = "0.1.0"
-description = "Reinforcement-learning research for simulated attack-path exploration."
+version = "0.2.0"
+description = "A deterministic simulation observatory for reinforcement-learning attack paths."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "AI Security Lab Contributors" }]
+keywords = ["reinforcement-learning", "cybersecurity", "gymnasium", "simulation", "attack-graph"]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3.10",
@@ -23,9 +24,17 @@ classifiers = [
 dependencies = [
   "gymnasium>=1.0,<2",
   "networkx>=3.2,<4",
-  "numpy>=1.26,<3",
+  "numpy>=1.26,<2.4",
   "pydantic>=2.9,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/MintKangaroo/RLattack"
+Repository = "https://github.com/MintKangaroo/RLattack"
+Issues = "https://github.com/MintKangaroo/RLattack/issues"
+
+[project.scripts]
+rlattack = "rlattack.cli:main"
 
 [project.optional-dependencies]
 training = [
@@ -38,10 +47,15 @@ dashboard = [
   "uvicorn[standard]>=0.30,<1",
 ]
 dev = [
+  "fastapi>=0.115,<1",
+  "httpx2>=2.9,<3",
   "mypy>=1.11,<2",
-  "pytest>=8.3,<9",
+  "pip-audit>=2.9,<3",
+  "pytest>=9.0.3,<10",
   "pytest-cov>=5,<8",
   "ruff>=0.8,<1",
+  "types-networkx>=3.2,<4",
+  "uvicorn>=0.30,<1",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -55,12 +69,17 @@ line-length = 100
 select = ["E", "F", "I", "B", "UP", "SIM", "S"]
 
 [tool.ruff.lint.per-file-ignores]
+"src/rlattack/report.py" = ["E501"]
 "tests/**/*.py" = ["S101"]
 
 [tool.mypy]
 python_version = "3.10"
 strict = true
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["stable_baselines3", "stable_baselines3.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=rlattack --cov-report=term-missing --cov-fail-under=100"

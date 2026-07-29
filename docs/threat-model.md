@@ -18,12 +18,13 @@ operate on real systems. Security-flavored actions are simulator events only.
 
 Scenario files, experiment configuration, sanitized ThreatGraph exports, saved policies, and
 optional local cyber-range adapters are untrusted inputs. They must be validated before use.
-Dashboard views, if implemented, are observability surfaces rather than control planes for
-real infrastructure.
+Dashboard views are observability surfaces and synthetic-experiment controls rather than
+control planes for real infrastructure. The server rejects non-loopback bind addresses.
 
 ## Foundation controls
 
-- no network-capable production code;
+- no client for public or target networks;
+- loopback-only dashboard bind validation;
 - no subprocess or shell integration;
 - secrets and generated artifacts excluded from version control;
 - read-only GitHub Actions permissions; and
