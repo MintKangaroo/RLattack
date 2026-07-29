@@ -65,7 +65,7 @@ Reward 설정과 함께 Scenario ID, Seed, Environment 버전, Algorithm을 저�
 - `mean_steps`: Episode당 평균 Step
 - `mean_reward`: 누적 Reward 평균
 - `mean_detection_risk`: Episode 종료 시 Detection Risk 평균
-- `mean_path_cost`: 시뮬레이션 경로 비용 평균
+- `mean_path_cost`: Episode에서 새 Host로 진행할 때 사용한 Network Edge 가중치의 합
 - `unseen_scenario_performance`: 학습에 사용하지 않은 Scenario 결과
 
 현재 `rlattack.evaluation`은 동일 Seed 묶음에 대한 기본 Metric 집계를 제공합니다.
@@ -93,7 +93,7 @@ CI는 짧은 Smoke Test만 실행합니다. PyTorch·Stable-Baselines3가 필요
 ## 9. 한계
 
 - 합성 Graph의 구조와 난이도가 실제 조직 Network의 다양성을 대표하지 않습니다.
-- 현재 Path Cost는 Simulator Step 기반이며 현실의 운영 비용을 의미하지 않습니다.
+- Path Cost는 Scenario의 합성 Edge 가중치이며 현실의 운영 비용을 의미하지 않습니다.
 - 학습 성능은 Seed, Reward Scale, Scenario Generator에 민감할 수 있습니다.
 - Explainability는 정책의 관찰 근거를 보여주며 인과적 설명이나 보안 보장을 의미하지 않습니다.
 - ThreatGraph Adapter는 실행 가능한 Exploit이나 실제 대상 식별자를 지원하지 않습니다.

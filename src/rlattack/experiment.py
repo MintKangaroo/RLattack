@@ -1,0 +1,275 @@
+"""Shared experiment runner used by the CLI, reports, and local dashboard."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any, Literal, cast
+
+import numpy as np
+
+from rlattack.agents import (
+    Agent,
+    GreedyAgent,
+    RandomAgent,
+    RuleBasedAgent,
+    ShortestPathOracle,
+    reset_agent,
+)
+from rlattack.env import ACTION_NAMES, AttackPathEnv
+from rlattack.evaluation import evaluate_agent
+from rlattack.explain import EpisodeTrace, explain_action
+from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
+from rlattack.reward import RewardStrategy, build_reward_config
+from rlattack.scenario import Scenario
+
+AgentName = Literal["random", "greedy", "rule-based", "shortest-path"]
+
+AGENT_LABELS: dict[AgentName, str] = {
+    "random": "Random",
+    "greedy": "Greedy",
+    "rule-based": "Rule-based",
+    "shortest-path": "Graph oracle",
+}
+
+
+@dataclass(frozen=True)
+class ExperimentConfig:
+    """Serializable inputs for a reproducible simulator experiment."""
+
+    size: ScenarioSize = "medium"
+    difficulty: Difficulty = "hard"
+    seed: int = 42
+    agent: AgentName = "greedy"
+    reward_strategy: RewardStrategy = "risk-aware"
+    step_budget: int = 64
+    benchmark_episodes: int = 8
+
+    def __post_init__(self) -> None:
+        if self.size not in {"small", "medium", "large"}:
+            raise ValueError("size must be small, medium, or large")
+        if self.difficulty not in {"easy", "medium", "hard"}:
+            raise ValueError("difficulty must be easy, medium, or hard")
+        if self.agent not in AGENT_LABELS:
+            raise ValueError("unsupported baseline agent")
+        if self.reward_strategy not in {"sparse", "shaped", "risk-aware", "cost-aware"}:
+            raise ValueError("unsupported reward strategy")
+        if self.step_budget < 1:
+            raise ValueError("step_budget must be positive")
+        if self.benchmark_episodes < 1:
+            raise ValueError("benchmark_episodes must be positive")
+
+
+@dataclass(frozen=True)
+class EpisodeStep:
+    """One decision and its observable outcome."""
+
+    step: int
+    action: str
+    valid: bool
+    reward: float
+    cumulative_reward: float
+    detection_risk: float
+    affected_nodes: tuple[str, ...]
+    state: dict[str, int | float]
+
+
+@dataclass(frozen=True)
+class EpisodeResult:
+    """Complete deterministic episode result."""
+
+    agent: AgentName
+    success: bool
+    terminated: bool
+    truncated: bool
+    steps: int
+    cumulative_reward: float
+    detection_risk: float
+    path_cost: float
+    visited_nodes: tuple[str, ...]
+    trace: tuple[EpisodeStep, ...]
+
+
+def create_agent(name: AgentName, scenario: Scenario, *, seed: int) -> Agent:
+    """Create one baseline policy with a stable public name."""
+
+    if name == "random":
+        return RandomAgent(seed=seed)
+    if name == "greedy":
+        return GreedyAgent()
+    if name == "rule-based":
+        return RuleBasedAgent()
+    if name == "shortest-path":
+        return ShortestPathOracle(scenario)
+    raise ValueError(f"unsupported baseline agent: {name}")
+
+
+def run_episode(
+    scenario: Scenario,
+    *,
+    agent_name: AgentName = "greedy",
+    seed: int = 0,
+    step_budget: int = 64,
+    reward_strategy: RewardStrategy = "shaped",
+) -> EpisodeResult:
+    """Run one baseline episode and retain an explainable trajectory."""
+
+    reward_config = build_reward_config(reward_strategy)
+    env = AttackPathEnv(scenario, step_budget=step_budget, reward_config=reward_config)
+    agent = create_agent(agent_name, scenario, seed=seed)
+    reset_agent(agent, seed=seed)
+    observation, info = env.reset(seed=seed)
+    trace = EpisodeTrace()
+    records: list[EpisodeStep] = []
+    cumulative_reward = 0.0
+    terminated = False
+    truncated = False
+
+    while not terminated and not truncated:
+        action = agent.predict(observation, info)
+        previous_observation = observation
+        previous_info = info
+        observation, reward, terminated, truncated, info = env.step(action)
+        affected_nodes = cast(tuple[str, ...], info["affected_nodes"])
+        explanation = explain_action(
+            previous_observation,
+            int(action),
+            reward,
+            previous_info,
+            affected_nodes=affected_nodes,
+        )
+        trace.append(explanation)
+        cumulative_reward += reward
+        records.append(
+            EpisodeStep(
+                step=cast(int, info["steps"]),
+                action=explanation.action,
+                valid=cast(bool, info["valid_action"]),
+                reward=reward,
+                cumulative_reward=cumulative_reward,
+                detection_risk=cast(float, info["detection_risk"]),
+                affected_nodes=affected_nodes,
+                state={
+                    "discovered_hosts": int(np.sum(observation["discovered_hosts"])),
+                    "known_services": int(np.sum(observation["known_services"])),
+                    "validated_vulnerabilities": int(
+                        np.sum(observation["validated_vulnerabilities"])
+                    ),
+                    "acquired_privileges": int(np.sum(observation["acquired_privileges"])),
+                    "steps_remaining": float(observation["steps_remaining"][0]),
+                },
+            )
+        )
+
+    success = bool(terminated and records and records[-1].action == ACTION_NAMES[7])
+    overlay = trace.graph_overlay(scenario)
+    return EpisodeResult(
+        agent=agent_name,
+        success=success,
+        terminated=terminated,
+        truncated=truncated,
+        steps=cast(int, info["steps"]),
+        cumulative_reward=cumulative_reward,
+        detection_risk=cast(float, info["detection_risk"]),
+        path_cost=cast(float, info["path_cost"]),
+        visited_nodes=tuple(
+            cast(str, node["id"]) for node in overlay if cast(bool, node["visited"])
+        ),
+        trace=tuple(records),
+    )
+
+
+def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, Any]:
+    """Build the deterministic view model consumed by HTML and JSON clients."""
+
+    selected = config or ExperimentConfig()
+    scenario = generate_scenario(selected.size, selected.difficulty, selected.seed)
+    episode = run_episode(
+        scenario,
+        agent_name=selected.agent,
+        seed=selected.seed,
+        step_budget=selected.step_budget,
+        reward_strategy=selected.reward_strategy,
+    )
+    evaluation_seeds = tuple(
+        selected.seed + offset for offset in range(selected.benchmark_episodes)
+    )
+    metrics = []
+    for agent_name in AGENT_LABELS:
+        metric = evaluate_agent(
+            agent_name,
+            create_agent(agent_name, scenario, seed=selected.seed),
+            lambda seed: AttackPathEnv(
+                scenario,
+                step_budget=selected.step_budget,
+                reward_config=build_reward_config(selected.reward_strategy),
+            ),
+            evaluation_seeds,
+        )
+        metrics.append({**asdict(metric), "label": AGENT_LABELS[agent_name]})
+
+    route = ShortestPathOracle(scenario).route
+    visited = set(episode.visited_nodes)
+    entry_hosts = set(scenario.entry_host_ids)
+    objective_hosts = {objective.host_id for objective in scenario.objectives}
+    host_nodes = [
+        {
+            "id": host.id,
+            "label": host.id.replace("host-", "NODE "),
+            "os": host.operating_system or "unknown",
+            "zone": host.zone,
+            "services": sum(service.host_id == host.id for service in scenario.services),
+            "detection": round(
+                sum(
+                    control.detection_probability
+                    for control in scenario.security_controls
+                    if host.id in control.host_ids
+                ),
+                3,
+            ),
+            "visited": host.id in visited,
+            "entry": host.id in entry_hosts,
+            "objective": host.id in objective_hosts,
+        }
+        for host in scenario.hosts
+    ]
+    route_edges = set(zip(route[:-1], route[1:], strict=True))
+    edges = [
+        {
+            "source": edge.source_host_id,
+            "target": edge.target_host_id,
+            "cost": edge.cost,
+            "route": (edge.source_host_id, edge.target_host_id) in route_edges,
+        }
+        for edge in scenario.network_edges
+    ]
+    reward_values = asdict(build_reward_config(selected.reward_strategy))
+    return {
+        "schema_version": "1.0",
+        "config": asdict(selected),
+        "scenario": {
+            "id": scenario.id,
+            "name": scenario.name,
+            "hosts": len(scenario.hosts),
+            "services": len(scenario.services),
+            "vulnerabilities": len(scenario.vulnerabilities),
+            "edges": len(scenario.network_edges),
+            "nodes": host_nodes,
+            "network_edges": edges,
+            "oracle_route": route,
+        },
+        "episode": {
+            **asdict(episode),
+            "agent_label": AGENT_LABELS[episode.agent],
+        },
+        "benchmarks": metrics,
+        "reward": {
+            "strategy": selected.reward_strategy,
+            "values": reward_values,
+        },
+        "safety": {
+            "mode": "simulation-only",
+            "network_access": False,
+            "subprocess_execution": False,
+            "live_credentials": False,
+        },
+    }

@@ -21,6 +21,14 @@ class Agent(Protocol):
         """Select one valid action for the current state."""
 
 
+def reset_agent(agent: Agent, *, seed: int | None = None) -> None:
+    """Reset episode-local policy state when an Agent exposes that optional hook."""
+
+    reset = getattr(agent, "reset", None)
+    if callable(reset):
+        reset(seed=seed)
+
+
 def _valid_actions(info: dict[str, object]) -> np.ndarray[Any, Any]:
     mask = np.asarray(info.get("action_mask"), dtype=np.int8)
     if mask.shape != (len(Action),):
@@ -38,7 +46,13 @@ class RandomAgent:
     seed: int = 0
 
     def __post_init__(self) -> None:
-        self._rng = np.random.default_rng(self.seed)
+        self.reset()
+
+    def reset(self, *, seed: int | None = None) -> None:
+        """Start a reproducible random stream for a new episode."""
+
+        episode_seed = self.seed if seed is None else seed
+        self._rng = np.random.default_rng(episode_seed)
 
     def predict(self, observation: Observation, info: dict[str, object]) -> np.int64:
         del observation
@@ -61,6 +75,11 @@ class GreedyAgent:
         Action.DISCOVER_HOST,
         Action.STOP,
     )
+
+    def reset(self, *, seed: int | None = None) -> None:
+        """Reset the stateless policy (provided for the shared Agent protocol)."""
+
+        del seed
 
     def predict(self, observation: Observation, info: dict[str, object]) -> np.int64:
         del observation
@@ -87,16 +106,16 @@ class RuleBasedAgent:
         Action.STOP,
     )
 
-    def __post_init__(self) -> None:
-        self._cursor = 0
+    def reset(self, *, seed: int | None = None) -> None:
+        """Reset the stateless rule policy for a new episode."""
+
+        del seed
 
     def predict(self, observation: Observation, info: dict[str, object]) -> np.int64:
         del observation
         valid = set(int(action) for action in _valid_actions(info))
-        for index in range(self._cursor, len(self.rules)):
-            action = self.rules[index]
+        for action in self.rules:
             if int(action) in valid:
-                self._cursor = index + 1
                 return np.int64(action)
         return np.int64(Action.STOP)
 
@@ -112,21 +131,43 @@ class ShortestPathOracle:
     scenario: Scenario
 
     def __post_init__(self) -> None:
+        if not self.scenario.hosts:
+            raise ValueError("graph oracle requires at least one host")
+        if not self.scenario.objectives:
+            raise ValueError("graph oracle requires at least one objective")
         graph = self.scenario.to_networkx()
         hosts = {host.id for host in self.scenario.hosts}
-        self._path_hosts = tuple(
-            node
-            for node in nx.shortest_path(
-                graph.subgraph(hosts),
-                self.scenario.entry_host_ids[0],
-                self.scenario.objectives[0].host_id,
-            )
+        entry_host = (
+            self.scenario.entry_host_ids[0]
+            if self.scenario.entry_host_ids
+            else self.scenario.hosts[0].id
         )
+        try:
+            self.route = tuple(
+                node
+                for node in nx.shortest_path(
+                    graph.subgraph(hosts),
+                    entry_host,
+                    self.scenario.objectives[0].host_id,
+                )
+            )
+        except nx.NetworkXNoPath as error:
+            raise ValueError("graph oracle requires a path to the objective") from error
+        self._objective_index = next(
+            index
+            for index, host in enumerate(self.scenario.hosts)
+            if host.id == self.scenario.objectives[0].host_id
+        )
+
+    def reset(self, *, seed: int | None = None) -> None:
+        """Reset the stateless oracle for a new episode."""
+
+        del seed
 
     def predict(self, observation: Observation, info: dict[str, object]) -> np.int64:
         valid = set(int(action) for action in _valid_actions(info))
         discovered = observation["discovered_hosts"]
-        if not np.all(discovered):
+        if not discovered[self._objective_index]:
             return np.int64(
                 Action.PIVOT_SIMULATED_NETWORK
                 if int(Action.PIVOT_SIMULATED_NETWORK) in valid

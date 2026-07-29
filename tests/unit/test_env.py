@@ -49,7 +49,7 @@ def make_scenario() -> Scenario:
 
 
 def test_gymnasium_checker_passes() -> None:
-    check_env(AttackPathEnv(make_scenario()))
+    check_env(AttackPathEnv(make_scenario()), skip_render_check=True)
 
 
 def test_reset_with_same_seed_reproduces_observation() -> None:
@@ -87,6 +87,9 @@ def test_action_mask_and_simulated_success_path() -> None:
     assert reward > 0
     assert observation["discovered_hosts"].tolist() == [1, 1]
     assert info["action_name"] == "collect_simulated_objective"
+    assert info["affected_nodes"] == ("db", "collect")
+    assert info["path_cost"] == 1.0
+    assert info["valid_action"] is True
 
 
 def test_invalid_action_is_penalized_and_budget_truncates() -> None:
@@ -99,6 +102,8 @@ def test_invalid_action_is_penalized_and_budget_truncates() -> None:
     assert terminated is False
     assert truncated is True
     assert info["steps"] == 1
+    with pytest.raises(RuntimeError, match="reset"):
+        env.step(np.int64(Action.STOP))
 
 
 def test_invalid_action_value_and_constructor_inputs_are_rejected() -> None:

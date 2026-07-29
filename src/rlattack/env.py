@@ -119,8 +119,11 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             self._discovered_hosts[index] = 1
             self._reachable_hosts[index] = 1
         self._detection_risk = 0.0
+        self._path_cost = 0.0
+        self._affected_nodes: tuple[str, ...] = ()
         self._steps = 0
         self._terminated = False
+        self._finished = False
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -128,13 +131,19 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         super().reset(seed=seed)
         del options
         self._reset_state()
-        return self._observation(), {"action_mask": self.action_mask()}
+        return self._observation(), {
+            "action_mask": self.action_mask(),
+            "detection_risk": self._detection_risk,
+            "path_cost": self._path_cost,
+            "steps": self._steps,
+        }
 
     def step(self, action: np.int64) -> tuple[Observation, float, bool, bool, dict[str, Any]]:
-        if self._terminated:
-            raise RuntimeError("step() called after episode termination; call reset() first")
+        if self._finished:
+            raise RuntimeError("step() called after episode completion; call reset() first")
         action_id = self._validate_action(action)
         valid = bool(self.action_mask()[action_id])
+        self._affected_nodes = ()
         reward = self.reward_config.step_cost
         if not valid:
             reward += self.reward_config.duplicate_or_invalid
@@ -161,11 +170,15 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         risk_penalty = self._detection_risk * self.reward_config.detection_risk
         reward += risk_penalty
         truncated = self._steps >= self.step_budget and not self._terminated
+        self._finished = self._terminated or truncated
         info: dict[str, Any] = {
             "action_mask": self.action_mask(),
             "action_name": ACTION_NAMES[action_id],
+            "affected_nodes": self._affected_nodes,
             "detection_risk": self._detection_risk,
+            "path_cost": self._path_cost,
             "steps": self._steps,
+            "valid_action": valid,
         }
         return self._observation(), float(reward), self._terminated, truncated, info
 
@@ -271,6 +284,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             ):
                 self._discovered_hosts[target] = 1
                 self._reachable_hosts[target] = 1
+                self._path_cost += edge.cost
+                self._affected_nodes = (edge.source_host_id, edge.target_host_id)
                 return self.reward_config.new_host
         return self.reward_config.duplicate_or_invalid  # pragma: no cover
 
@@ -278,14 +293,20 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         for index, service in enumerate(self.scenario.services):
             if not self._known_services[index] and self._host_has_discovered_service(service.id):
                 self._known_services[index] = 1
+                self._affected_nodes = (service.host_id, service.id)
                 return self.reward_config.new_service
         return self.reward_config.duplicate_or_invalid  # pragma: no cover
 
     def _enumerate_service(self) -> float:
         candidates = np.flatnonzero(self._known_services & (1 - self._enumerated_services))
         if len(candidates):
+            service = self.scenario.services[int(candidates[0])]
             self._enumerated_services[candidates[0]] = 1
-            self._detection_risk = min(1.0, self._detection_risk + 0.05)
+            self._detection_risk = min(
+                1.0,
+                self._detection_risk + self._host_detection_increment(service.host_id),
+            )
+            self._affected_nodes = (service.host_id, service.id)
             return 0.0
         return self.reward_config.duplicate_or_invalid  # pragma: no cover
 
@@ -297,6 +318,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
                 and self._enumerated_services[service_index]
             ):
                 self._validated_vulnerabilities[index] = 1
+                self._affected_nodes = (vulnerability.service_id, vulnerability.id)
                 return self.reward_config.validated_vulnerability
         return self.reward_config.duplicate_or_invalid  # pragma: no cover
 
@@ -312,6 +334,13 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
                 self._acquired_privileges[
                     self._privilege_index[self.scenario.credentials[credential].privilege_id]
                 ] = 1
+                credential_record = self.scenario.credentials[credential]
+                self._affected_nodes = (
+                    edge.vulnerability_id,
+                    edge.credential_id,
+                    credential_record.host_id,
+                    credential_record.privilege_id,
+                )
                 return self.reward_config.access
         return self.reward_config.duplicate_or_invalid  # pragma: no cover
 
@@ -321,6 +350,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             target = self._privilege_index[edge.target_privilege_id]
             if self._acquired_privileges[source] and not self._acquired_privileges[target]:
                 self._acquired_privileges[target] = 1
+                self._affected_nodes = (edge.source_privilege_id, edge.target_privilege_id)
                 return self.reward_config.privilege_escalation
         return self.reward_config.duplicate_or_invalid  # pragma: no cover
 
@@ -329,8 +359,30 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
 
     def _collect_objective(self) -> float:
         if self._can_collect():
+            objective = next(
+                objective
+                for objective in self.scenario.objectives
+                if self._discovered_hosts[self._host_index[objective.host_id]]
+                and (
+                    objective.required_privilege_id is None
+                    or self._acquired_privileges[
+                        self._privilege_index[objective.required_privilege_id]
+                    ]
+                )
+            )
+            self._affected_nodes = (objective.host_id, objective.id)
             return self.reward_config.objective
         return self.reward_config.duplicate_or_invalid  # pragma: no cover
 
     def _vulnerability(self, index: int) -> Vulnerability:
         return self.scenario.vulnerabilities[index]
+
+    def _host_detection_increment(self, host_id: str) -> float:
+        probabilities = [
+            control.detection_probability
+            for control in self.scenario.security_controls
+            if host_id in control.host_ids
+        ]
+        if not probabilities:
+            return 0.05
+        return max(0.02, (sum(probabilities) / len(probabilities)) * 0.15)

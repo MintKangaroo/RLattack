@@ -12,6 +12,13 @@
 10. Add policy and graph explainability outputs. (completed)
 11. Add a sanitized ThreatGraph scenario adapter. (completed)
 12. Document the experimental methodology, limitations, ethics, and safety scope. (completed)
+13. Add a shared explainable experiment runner and weighted path metrics. (completed)
+14. Add a CLI and portable self-contained HTML reports. (completed)
+15. Add a loopback-only interactive dashboard and experiment API. (completed)
+16. Verify desktop/mobile rendering and publish real dashboard screenshots. (completed)
+17. Make sanitized graph export fully anonymous and structure-preserving. (completed)
+18. Add dependency auditing and automated dependency update monitoring. (completed)
+19. Verify monitored DQN and PPO CPU training and final checkpoints. (completed)
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

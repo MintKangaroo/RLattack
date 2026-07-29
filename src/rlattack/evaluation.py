@@ -8,7 +8,7 @@ from typing import cast
 
 import numpy as np
 
-from rlattack.agents import Agent
+from rlattack.agents import Agent, reset_agent
 from rlattack.env import ACTION_NAMES, AttackPathEnv
 
 
@@ -42,6 +42,7 @@ def evaluate_agent(
     risks: list[float] = []
     path_costs: list[float] = []
     for seed in seeds:
+        reset_agent(agent, seed=seed)
         env = env_factory(seed)
         observation, raw_info = env.reset(seed=seed)
         info: dict[str, object] = raw_info
@@ -60,7 +61,8 @@ def evaluate_agent(
         episode_risk = cast(float, info["detection_risk"])
         steps.append(episode_steps)
         risks.append(episode_risk)
-        path_costs.append(float(episode_steps))
+        path_cost = cast(float | int, info.get("path_cost", episode_steps))
+        path_costs.append(float(path_cost))
     episode_count = len(seeds)
     return BenchmarkMetrics(
         agent_name=agent_name,

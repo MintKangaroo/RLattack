@@ -23,11 +23,21 @@ def test_episode_trace_and_graph_overlay_are_serializable() -> None:
     env = AttackPathEnv(scenario)
     observation, info = env.reset()
     trace = EpisodeTrace()
-    trace.append(explain_action(observation, Action.SCAN_SERVICE, 0.5, info))
+    trace.append(
+        explain_action(
+            observation,
+            Action.SCAN_SERVICE,
+            0.5,
+            info,
+            affected_nodes=("host-00",),
+        )
+    )
+    overlay = trace.graph_overlay(scenario)
 
     assert trace.actions == ("scan_service",)
     assert trace.cumulative_reward == 0.5
-    assert any(node["kind"] == "host" for node in trace.graph_overlay(scenario))
+    assert any(node["kind"] == "host" for node in overlay)
+    assert next(node for node in overlay if node["id"] == "host-00")["visited"] is True
 
 
 def test_invalid_action_and_invalid_probability_are_rejected() -> None:

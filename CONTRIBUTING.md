@@ -1,7 +1,8 @@
 # Contributing
 
-Use Python 3.10 or later and create changes on a focused branch. Keep each pull request
-small, typed, tested, and documented.
+Use Python 3.10 or later and create changes on a focused branch. Install the complete
+development environment with `python -m pip install -e ".[dev,dashboard]"`. Keep each pull
+request small, typed, tested, and documented.
 
 ## Branch policy
 
@@ -18,10 +19,8 @@ small, typed, tested, and documented.
 Before committing, run:
 
 ```bash
-ruff check .
-ruff format --check .
-mypy .
-pytest
+make check
+make audit
 ```
 
 Use Conventional Commits, such as `feat(env): add deterministic reset` or

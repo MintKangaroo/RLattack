@@ -23,13 +23,13 @@
     <rect x="620" y="145" width="235" height="145" rx="16" fill="url(#card)" stroke="#fbbf24"/>
     <text x="644" y="184" font-size="20" font-weight="700">Agents</text>
     <text x="644" y="214" font-size="15" fill="#fef3c7">Random · Greedy</text>
-    <text x="644" y="242" font-size="14" fill="#fde68a">Rule-based · Shortest-path</text>
-    <text x="644" y="265" font-size="14" fill="#fde68a">DQN · PPO (예정)</text>
+    <text x="644" y="242" font-size="14" fill="#fde68a">Rule-based · Graph Oracle</text>
+    <text x="644" y="265" font-size="14" fill="#fde68a">DQN · PPO Training</text>
     <rect x="900" y="145" width="235" height="145" rx="16" fill="url(#card)" stroke="#c084fc"/>
     <text x="924" y="184" font-size="20" font-weight="700">Research Output</text>
     <text x="924" y="214" font-size="15" fill="#f3e8ff">Metrics · Checkpoints</text>
     <text x="924" y="242" font-size="14" fill="#e9d5ff">Evaluation · Explainability</text>
-    <text x="924" y="265" font-size="14" fill="#e9d5ff">TensorBoard / MLflow (예정)</text>
+    <text x="924" y="265" font-size="14" fill="#e9d5ff">CLI · HTML · Dashboard</text>
   </g>
   <g stroke="#93c5fd" stroke-width="3" fill="none" marker-end="url(#arrow)">
     <path d="M295 218 H335"/><path d="M575 218 H615"/><path d="M855 218 H895"/>
