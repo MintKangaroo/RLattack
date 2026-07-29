@@ -19,6 +19,7 @@
 17. Make sanitized graph export fully anonymous and structure-preserving. (completed)
 18. Add dependency auditing and automated dependency update monitoring. (completed)
 19. Verify monitored DQN and PPO CPU training and final checkpoints. (completed)
+20. Promote the validated v0.2 observatory to the GitHub default branch with release documentation. (completed)
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

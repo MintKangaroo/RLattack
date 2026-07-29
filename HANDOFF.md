@@ -1,10 +1,15 @@
 # RLAttack 인수인계
 
+> 다음 세션 시작점: 2026-07-30 기준 v0.2.0 완성본
+
 ## 현재 상태
 
 - Package version: `0.2.0`
-- 기준 브랜치: `develop`
+- 기준 브랜치: `main`
 - 원격 저장소: <https://github.com/MintKangaroo/RLattack>
+- 최신 main 병합 커밋: `1031c8b` (`release: promote RLAttack v0.2 simulation observatory`)
+- 최근 릴리스 PR: [#3](https://github.com/MintKangaroo/RLattack/pull/3)
+- 현재 상태: GitHub Actions `quality` 통과, 작업 트리 clean
 - 실행 경계: synthetic graph와 in-process state transition만 허용
 - 품질 기준: Ruff, strict mypy, 67 tests, package coverage 100%
 
@@ -28,7 +33,19 @@
 16. pip-audit CI gate와 Python/GitHub Actions Dependabot
 17. DQN/PPO CPU smoke training, Monitor evaluation, final checkpoint 검증
 
-## 주요 명령
+## 다음 세션 시작 명령
+
+```bash
+git clone https://github.com/MintKangaroo/RLattack.git
+cd RLattack
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev,dashboard]"
+make check
+make audit
+```
+
+## 주요 실행 명령
 
 ```bash
 source .venv/bin/activate
@@ -41,6 +58,26 @@ rlattack dashboard
 ```
 
 Dashboard: <http://127.0.0.1:8000>
+
+## 현재 검증 결과
+
+- `67 passed`, package coverage `100%` (916 statements)
+- Ruff check/format 및 strict mypy 통과
+- project-scoped `pip-audit`: known vulnerability 없음
+- clean virtualenv `pip check`: broken requirement 없음
+- DQN/PPO CPU smoke training과 final checkpoint 생성 확인
+- desktop/mobile dashboard browser rendering 및 API validation 확인
+
+## 다음 확장 후보
+
+기능 누락으로 인한 blocker는 없습니다. 다음 작업은 v0.3 연구 확장으로 별도 계획을 세워 진행합니다.
+
+1. 더 큰 synthetic graph와 다중 seed benchmark report
+2. 실험 결과 artifact schema 및 CSV/JSONL batch export
+3. dashboard benchmark history 비교와 결과 다운로드 UX
+4. 실제 연구 질문에 맞춘 ablation protocol과 통계 요약
+
+확장 시에도 synthetic graph, in-process transition, loopback-only dashboard라는 안전 경계를 유지합니다.
 
 ## 구현 메모
 

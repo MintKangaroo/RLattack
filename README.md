@@ -351,6 +351,8 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 
 현재 `v0.2.0`은 연구용 end-to-end workflow를 제공합니다. 실제 환경의 다양성을 합성 graph가
 완전히 대표하지 않으며, explainability output은 인과적 설명이나 보안 보장을 의미하지 않습니다.
+현재 검증된 v0.2.0 완성본은 GitHub 기본 브랜치 `main`에 반영되어 있으며, 다음 확장은 v0.3 연구
+계획으로 관리합니다.
 
 ## 문서
 
