@@ -22,6 +22,6 @@ test:
 	python3 -m pytest
 
 audit:
-	python3 -m pip_audit --local --skip-editable
+	python3 -m pip_audit . --skip-editable
 
 check: lint format-check typecheck test
