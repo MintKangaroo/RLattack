@@ -21,6 +21,7 @@ from rlattack.curriculum import (
     stage_env_factory,
 )
 from rlattack.dashboard import run_dashboard
+from rlattack.defender import BanditDefender
 from rlattack.env import AttackPathEnv, ObservationConfig
 from rlattack.evaluation import BenchmarkMetrics
 from rlattack.experiment import (
@@ -37,6 +38,7 @@ from rlattack.experiment import (
     run_reward_ablation,
 )
 from rlattack.export import write_results
+from rlattack.game import play
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.policies import Algorithm, load_policy
 from rlattack.report import write_dashboard_report, write_transfer_report
@@ -238,6 +240,23 @@ def build_parser() -> argparse.ArgumentParser:
     conditions.add_argument("--output", type=Path, default=Path("artifacts/conditions.jsonl"))
     conditions.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
     _add_significance_arguments(conditions, default_reference=CONTROL_LABEL)
+
+    game = commands.add_parser(
+        "game",
+        help="play a fixed attacker against a defender that adapts between episodes",
+    )
+    _add_experiment_arguments(game)
+    game.add_argument(
+        "--policy",
+        type=Path,
+        help="optional local Stable-Baselines3 checkpoint; defaults to the --agent baseline",
+    )
+    game.add_argument(
+        "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
+    )
+    game.add_argument("--rounds", type=int, default=200, help="episodes the defender learns over")
+    game.add_argument("--exploration", type=float, default=0.15)
+    game.add_argument("--output", type=Path, default=Path("artifacts/game.jsonl"))
 
     train = commands.add_parser(
         "train", help="train an optional Stable-Baselines3 policy on generated scenarios"
@@ -464,23 +483,7 @@ def _run_conditions(args: argparse.Namespace) -> int:
     """Evaluate one policy across the defender x discovery grid."""
 
     config = _config_from_args(args)
-    if args.policy is not None:
-        policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
-        label = args.policy_algorithm
-
-        def agent_factory(seed: int) -> Agent:
-            del seed
-            return policy
-    else:
-        label = config.agent
-
-        def agent_factory(seed: int) -> Agent:
-            return create_agent(
-                config.agent,
-                generate_scenario(config.size, config.difficulty, seed),
-                seed=seed,
-            )
-
+    agent_factory, label = _agent_factory_from_args(args, config)
     metrics = run_condition_sweep(config, agent_factory)
     output = write_results(metrics, args.output, args.format)
     print("RLAttack condition sweep")
@@ -495,6 +498,63 @@ def _run_conditions(args: argparse.Namespace) -> int:
         )
     _print_comparisons(metrics, args)
     print(f"  export    : {output}")
+    return 0
+
+
+def _agent_factory_from_args(
+    args: argparse.Namespace, config: ExperimentConfig
+) -> tuple[Callable[[int], Agent], str]:
+    """Build the attacker factory shared by the evaluation commands."""
+
+    if args.policy is not None:
+        policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
+
+        def from_policy(seed: int) -> Agent:
+            del seed
+            return policy
+
+        return from_policy, str(args.policy_algorithm)
+
+    def from_baseline(seed: int) -> Agent:
+        return create_agent(
+            config.agent,
+            generate_scenario(config.size, config.difficulty, seed),
+            seed=seed,
+        )
+
+    return from_baseline, config.agent
+
+
+def _run_game(args: argparse.Namespace) -> int:
+    """Play a fixed attacker against a defender that adapts between episodes."""
+
+    config = _config_from_args(args)
+    agent_factory, label = _agent_factory_from_args(args, config)
+    result = play(
+        config,
+        agent_factory,
+        BanditDefender(exploration=args.exploration),
+        episodes=args.rounds,
+        seed=config.seed,
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(
+        "".join(
+            f"{json.dumps({'episode': index, **asdict(outcome)}, ensure_ascii=False)}\n"
+            for index, outcome in enumerate(result.outcomes)
+        ),
+        encoding="utf-8",
+    )
+    print("RLAttack attacker vs adaptive defender")
+    print(f"  attacker  : {label}")
+    print(f"  scenarios : {config.size}/{config.difficulty} x {result.episodes} rounds")
+    print(f"  attacker success : {result.attacker_success_rate:5.1%}")
+    print(f"  detected         : {result.detection_rate:5.1%}")
+    print(f"  defender reward  : {result.mean_defender_reward:.3f}")
+    print(f"  settled on       : {result.preferred_arm}")
+    for arm, pulls in result.pulls.items():
+        print(f"  {arm:<16} pulls={pulls:4}  value={result.values[arm]:.3f}")
+    print(f"  export    : {args.output.resolve()}")
     return 0
 
 
@@ -594,6 +654,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_transfer(args)
     if args.command == "conditions":
         return _run_conditions(args)
+    if args.command == "game":
+        return _run_game(args)
     if args.command == "train":
         return _run_training(args)
 

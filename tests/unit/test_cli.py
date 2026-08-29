@@ -572,3 +572,35 @@ def test_cli_conditions_accepts_a_trained_policy(
     )
 
     assert "policy    : maskable-ppo" in capsys.readouterr().out
+
+
+def test_cli_game_reports_the_defenders_learned_preference(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "game.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "game",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--agent",
+                "greedy",
+                "--rounds",
+                "10",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert "attacker vs adaptive defender" in printed
+    assert "settled on" in printed
+    assert len(rows) == 10
+    assert rows[0]["episode"] == 0
