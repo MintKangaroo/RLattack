@@ -354,10 +354,21 @@ record는 `rlattack benchmark --output`으로 내보내 외부에서 재분석�
 학습된 policy는 baseline과 같은 protocol에서 비교합니다.
 
 ```bash
-rlattack train --algorithm ppo --timesteps 200000
+rlattack train --algorithm maskable-ppo --curriculum
 rlattack benchmark --episodes 64 --policy artifacts/policies/final.zip \
-  --policy-algorithm ppo
+  --policy-algorithm maskable-ppo
+rlattack transfer --policy artifacts/policies/final.zip --report artifacts/transfer.html
 ```
+
+공개된 결과와 재현 명령은 [Published results](docs/results.md)에 있습니다. 요약하면,
+100k step curriculum으로 학습한 MaskablePPO는 `medium/hard`에서 graph oracle과 동일한
+성공률·탐지율(96.9% / 3.1%)을 내면서 보상은 유의하게 높습니다
+(+1.04, 95% CI [+0.11, +1.83], p=0.030). 더 짧은 경로가 아니라 **더 조용한 경로**를
+찾기 때문입니다.
+
+> **Action masking이 필수입니다.** 각 상태에서 유효한 action은 전체의 1~2%뿐이라
+> (예: 288개 중 4개), masking 없이 학습하면 탐색 예산이 invalid action에 소모되고
+> 정책이 즉시 `stop`하도록 수렴합니다. 기본 algorithm이 `maskable-ppo`인 이유입니다.
 
 전체 프로토콜과 한계는
 [Experimental Methodology](docs/methodology.md)에 정리되어 있습니다.
@@ -444,6 +455,7 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 - [Dashboard/API](docs/api.md)
 - [Experimental Methodology](docs/methodology.md)
 - [Threat Model](docs/threat-model.md)
+- [Published results](docs/results.md)
 - [Changelog](CHANGELOG.md)
 - [Roadmap](docs/roadmap.md)
 - [Contributing](CONTRIBUTING.md)

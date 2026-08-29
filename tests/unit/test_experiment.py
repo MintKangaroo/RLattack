@@ -29,6 +29,7 @@ def test_experiment_config_validates_public_inputs() -> None:
         {"benchmark_episodes": 10_000},
         {"observation": "partial"},
         {"defender": "chaotic"},
+        {"discovery": "blind"},
     )
     for values in invalid_values:
         with pytest.raises(ValueError):
@@ -113,6 +114,14 @@ def test_dashboard_data_uses_default_config() -> None:
 
     assert data["config"]["size"] == "medium"
     assert data["reward"]["strategy"] == "risk-aware"
+
+
+def test_discovery_mode_selects_the_topology_observation() -> None:
+    assert ExperimentConfig().dynamics().noisy_discovery is False
+    assert ExperimentConfig(discovery="noisy").dynamics().noisy_discovery is True
+    deterministic = ExperimentConfig(discovery="noisy", stochastic=False).dynamics()
+    assert deterministic.stochastic is False
+    assert deterministic.noisy_discovery is True
 
 
 def test_defender_mode_selects_the_experimental_condition() -> None:

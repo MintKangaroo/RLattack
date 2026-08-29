@@ -1,64 +1,85 @@
 # RLAttack 인수인계
 
-> 다음 세션 시작점: 2026-08-29 기준 v0.4.0 작업본
+> 다음 세션 시작점: 2026-08-29 기준 v0.5.0 작업본
 
 ## 현재 상태
 
-- Package version: `0.4.0`
-- 작업 브랜치: `feat/v040-partial-observability` (v0.3 PR #8 위에 쌓여 있습니다)
+- Package version: `0.5.0`
+- 작업 브랜치: `feat/v050-defender-latency` (PR #8 → #9 → 이 브랜치 순으로 쌓여 있습니다)
 - 원격 저장소: <https://github.com/MintKangaroo/RLattack>
 - 실행 경계: synthetic graph와 in-process state transition만 허용
-- 품질 기준: Ruff, strict mypy, 159 tests, package coverage 100%
+- 품질 기준: Ruff, strict mypy, 175 tests, package coverage 100%
 
-## v0.3에서 바뀐 것 (연구 타당성)
+## 이전 릴리스 요약
 
-v0.2는 엔지니어링 품질은 갖췄지만 RL 문제로서 degenerate했습니다. v0.3이 그 부분을
-고쳤습니다 (PR #8).
+- **v0.3 (PR #8)** — RL 문제를 non-degenerate하게: targeted action space, seed별
+  scenario를 만드는 generalization benchmark, 재현 가능한 확률적 dynamics,
+  discover/pivot 분리, 학습 policy 평가 경로, 분산·신뢰구간 보고.
+- **v0.4 (PR #9)** — 실험 프로토콜: 부분 관측(양자화 alert level, 크기를 숨기는 고정
+  capacity), 능동적 defender, 다목적 episode, paired 유의성 검정, curriculum과 전이 평가.
+  ⚠️ v0.4에서 보고한 전이 표는 아래 5번 버그의 영향을 받았습니다. v0.5의 수치를 쓰세요.
 
-1. Targeted action space (`action_type * target_count + target_index`)
-2. Seed마다 scenario를 새로 만드는 generalization benchmark
-3. 재현 가능한 확률적 dynamics와 detection threshold 종료
-4. Discover / pivot 분리 (pivot은 credential foothold를 요구)
-5. 학습 policy 평가 경로 (`SB3PolicyAgent`, `benchmark --policy`)
-6. std, 95% CI, detection rate, JSONL/CSV export
+## v0.5에서 바뀐 것
 
-## v0.4에서 바뀐 것 (연구 프로토콜)
+1. **Action masking 학습** (`maskable-ppo`, `sb3-contrib`). 이것이 v0.5의 핵심입니다.
+   각 상태에서 유효한 action은 전체의 1~2%(small scenario reset 시 288개 중 4개)뿐이라,
+   masking 없이 학습한 PPO 100k step curriculum은 **퇴화 정책**으로 수렴했습니다 —
+   3개 action 후 `stop`, 9개 scenario class 전부에서 동일한 4-step episode, 성공률 0%.
+   Environment가 이미 mask를 노출하고 있었으므로, 학습이 그것을 쓰도록 바꿨습니다.
+2. **Defender 반응 지연과 노이즈** — 이전에는 공격자의 정확한 risk를 읽고 임계값을 넘는
+   순간 반응했습니다. 이제 노이즈 섞인 추정치를 읽고 `response_latency` step 뒤에 효과가
+   발생합니다. 오탐 횟수는 `info`에 집계합니다.
+3. **Noisy discovery** — exact adjacency에서는 action mask 자체가 토폴로지였습니다
+   (인접한 host에만 `discover_host`를 제공). 이제 모든 미발견 host를 probe할 수 있고
+   인접한 것만 확률적으로 성공합니다.
+4. **리포트 뷰** — condition strip(dynamics/defender/discovery/observation),
+   defender 타일, `transfer --report`로 만드는 self-contained 전이 표.
+5. **전이 baseline 버그 수정** — `evaluate_transfer`가 seed만 받는 factory를 썼고 CLI가
+   **설정된** size/difficulty로 baseline을 만들었습니다. 즉 `ShortestPathOracle`이 한
+   scenario class로 만들어져 나머지 8개 class에서 실행됐고, route와 index가 다른 graph의
+   것이었습니다. Greedy fallback 덕에 동작은 해서 표가 그럴듯해 보였을 뿐입니다.
+   수정 후 oracle은 9개 class 전부에서 83~100%입니다(이전 large 18~38%).
+   **v0.4에서 "실제 일반화 격차"라고 한 것은 대부분 이 버그였습니다.**
 
-1. **부분 관측** — agent는 정확한 detection risk 대신 양자화된 `alert_level`만 봅니다.
-   고정 capacity padding으로 vector 길이가 네트워크 크기를 누설하지 않습니다.
-2. **능동적 defender** — 누적 risk가 임계값을 넘으면 도달한 host의 탐지 민감도를 올리고
-   credential을 회수합니다. 기본 off(대조군), `--defender adaptive`가 처치군입니다.
-3. **다목적 episode** — 모든 objective를 수집해야 종료됩니다. Oracle은 모든 objective
-   host를 지나는 경로를 계획합니다.
-4. **Paired 유의성 검정** — `rlattack.stats`의 sign-flip permutation test와 percentile
-   bootstrap. `benchmark --compare-to`, `ablation`, `transfer`에서 보고합니다.
-5. **Curriculum과 전이 평가** — `rlattack transfer`가 9개 class를 공유 seed로 평가하고,
-   `train --curriculum`이 하나의 policy를 stage에 걸쳐 학습합니다.
-
-### 작업 중 발견해 고친 캘리브레이션 문제
-
-- `steps_remaining`이 step budget으로 bound된 Box여서 stage 간 관측 공간이 달라졌습니다.
-  → `budget_fraction` (0~1)로 정규화하고 절대값은 `info`로 옮겼습니다.
-- Detection risk가 절대적인 "시끄러운 행동 예산"이라 `large` scenario는 경로가 길다는
-  이유만으로 도달 불가능했습니다(oracle 0/16). → host 수로 정규화(`normalize_risk_by_size`),
-  이후 19~38%. 남은 격차는 실제 일반화 gradient입니다.
-- Curriculum stage는 scenario 크기에 비례해 step budget을 확장합니다.
-
-### 전이 평가 결과 (graph oracle, 16 seeds, passive)
+### 전이 표 (graph oracle, 24 seeds, passive defender, 수정 후)
 
 | Class | success | detected | mean steps |
 | --- | --- | --- | --- |
-| small/easy | 93.8% | 6.2% | 22.7 ± 4.0 |
-| small/medium | 100.0% | 0.0% | 20.1 ± 6.1 |
-| small/hard | 93.8% | 6.2% | 25.4 ± 3.6 |
-| medium/easy | 68.8% | 31.2% | 46.6 ± 6.1 |
-| medium/medium | 75.0% | 25.0% | 39.1 ± 10.0 |
-| medium/hard | 93.8% | 6.2% | 28.4 ± 4.2 |
-| large/easy | 37.5% | 62.5% | 104.6 ± 15.7 |
-| large/medium | 18.8% | 81.2% | 95.6 ± 15.3 |
-| large/hard | 18.8% | 81.2% | 97.4 ± 15.0 |
+| small/easy | 100.0% | 0.0% | 17.1 ± 3.0 |
+| small/medium | 100.0% | 0.0% | 14.7 ± 4.0 |
+| small/hard | 100.0% | 0.0% | 18.4 ± 3.3 |
+| medium/easy | 87.5% | 12.5% | 38.5 ± 3.4 |
+| medium/medium | 91.7% | 8.3% | 30.2 ± 6.1 |
+| medium/hard | 91.7% | 8.3% | 28.3 ± 4.9 |
+| large/easy | 83.3% | 16.7% | 82.2 ± 4.7 |
+| large/medium | 91.7% | 8.3% | 62.6 ± 7.3 |
+| large/hard | 100.0% | 0.0% | 55.5 ± 6.8 |
 
-`easy`가 `hard`보다 어려운 구간이 있는 것은 shortcut edge가 없어 경로가 길기 때문입니다.
+Risk 정규화는 이 버그와 무관하게 여전히 필요합니다. 정규화를 끄면 수정된 oracle도
+`large/easy`에서 0%, large 전체 0~50%입니다.
+
+### 학습된 정책 재현
+
+```bash
+python -m pip install -e ".[dev,training]"
+rlattack train --algorithm maskable-ppo --curriculum --seed 42 \
+  --output-dir artifacts/policies/mppo
+rlattack transfer --policy artifacts/policies/mppo/final.zip \
+  --policy-algorithm maskable-ppo --observation curriculum \
+  --episodes 24 --output artifacts/transfer.jsonl --report artifacts/transfer.html
+```
+
+Checkpoint는 저장소에 커밋하지 않습니다(`artifacts/`는 gitignore). 위 명령으로 재생성합니다.
+100k step curriculum은 하한선이지 상한선이 아닙니다.
+
+### 학습 결과 요약 (`docs/results.md`에 전체 표)
+
+- `medium/hard` 32 seeds: MaskablePPO가 oracle과 동일한 96.9% 성공·3.1% 탐지,
+  보상은 유의하게 높음(+1.04, p=0.030). 경로가 더 **짧아서**가 아니라 더 **조용해서**입니다
+  (31.7 vs 27.3 steps).
+- 전이: 학습한 class에서 87~100%, held-out `large`에서 58~83%로 oracle(83~100%) 대비
+  17~25점 뒤처집니다.
+- 마스킹 없는 PPO와 DQN은 **둘 다** 9개 class 전부에서 4-step·성공률 0%로 퇴화했습니다.
 
 ## 다음 세션 시작 명령
 
@@ -79,21 +100,21 @@ rlattack demo
 rlattack benchmark --size medium --difficulty hard --episodes 64 \
   --output artifacts/benchmark.jsonl
 rlattack ablation --agent greedy --episodes 32 --compare-to shaped
-rlattack transfer --episodes 32 --output artifacts/transfer.jsonl
-rlattack train --algorithm ppo --curriculum          # .[training] 필요
+rlattack transfer --episodes 32 --report artifacts/transfer.html
+rlattack train --algorithm maskable-ppo --curriculum      # .[training] 필요
 rlattack dashboard
 ```
 
 Dashboard: <http://127.0.0.1:8000>
 
-## 다음 확장 후보 (v0.5)
+## 다음 확장 후보 (v0.6)
 
-`docs/roadmap.md`의 33–36번 항목입니다.
+`docs/roadmap.md`의 38–41번 항목입니다.
 
-1. DQN/PPO curriculum policy를 실제로 학습해 전이 표를 baseline과 유의성 검정으로 비교
-2. Dashboard 스크린샷 재촬영과 defender/transfer 뷰 노출
-3. Defender 반응 지연과 오탐 모델링 (임계값 문제 → 타이밍 문제)
-4. 인접 노드를 정확한 adjacency가 아니라 noisy scan model로 드러내기
+1. 더 긴 학습 예산과 hyperparameter sweep (현재 공개 정책은 100k step)
+2. 브라우저가 있는 환경에서 dashboard/transfer 스크린샷 재촬영
+3. 학습된 정책을 adaptive defender·noisy discovery 조건에서도 평가
+4. 자신의 정책을 학습하는 defender (2인 게임으로 확장)
 
 확장 시에도 synthetic graph, in-process transition, loopback-only dashboard라는 안전
 경계를 유지합니다.
@@ -114,8 +135,13 @@ Dashboard: <http://127.0.0.1:8000>
   reward signal을 쓰지 않으므로 행동 차이는 학습된 policy에서만 나타납니다.
 - `StageEnv`는 reset마다 stage에서 새 scenario를 뽑습니다. SB3가 environment를 한 번만
   만들기 때문에, 그러지 않으면 stage가 class가 아니라 graph 하나를 가르칩니다.
-- `docs/assets/dashboard.png`와 `dashboard-mobile.png`는 v0.2 실행 화면이라
-  v0.3/v0.4 UI 반영을 위해 재촬영이 필요합니다.
+- 학습에는 반드시 `maskable-ppo`를 씁니다. Masking 없는 `dqn`/`ppo`는 1~2%만 유효한
+  action 공간에서 즉시 `stop`하는 정책으로 수렴합니다. 이는 v0.5에서 실제로 관측한
+  결과이지 추측이 아닙니다.
+- `SB3PolicyAgent`는 invalid action을 교정하지 않습니다. 단, `maskable-ppo`는 mask를
+  입력으로 받아 학습되었으므로 평가 시에도 mask를 전달합니다(교정이 아니라 인터페이스).
+- `docs/assets/dashboard.png`와 `dashboard-mobile.png`는 v0.2 실행 화면입니다.
+  이 환경에는 브라우저가 없어 재촬영하지 못했습니다.
 
 ## 유지보수 시 주의사항
 

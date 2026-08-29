@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import cast
 
@@ -24,6 +25,7 @@ from rlattack.experiment import (
     REWARD_STRATEGIES,
     AgentName,
     DefenderMode,
+    DiscoveryMode,
     ExperimentConfig,
     ObservationMode,
     benchmark_seeds,
@@ -35,7 +37,7 @@ from rlattack.experiment import (
 from rlattack.export import write_results
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.policies import Algorithm, load_policy
-from rlattack.report import write_dashboard_report
+from rlattack.report import write_dashboard_report, write_transfer_report
 from rlattack.reward import RewardStrategy
 from rlattack.stats import compare_benchmarks
 from rlattack.training import (
@@ -80,6 +82,12 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
         choices=("passive", "adaptive"),
         default="passive",
         help="passive is the control condition; adaptive responds to the attacker",
+    )
+    parser.add_argument(
+        "--discovery",
+        choices=("exact", "noisy"),
+        default="exact",
+        help="exact adjacency, or a noisy scan that does not reveal the topology",
     )
 
 
@@ -171,7 +179,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="optional local Stable-Baselines3 checkpoint to benchmark alongside the baselines",
     )
-    benchmark.add_argument("--policy-algorithm", choices=("dqn", "ppo"), default="dqn")
+    benchmark.add_argument(
+        "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
+    )
     _add_significance_arguments(benchmark, default_reference="greedy")
 
     ablation = commands.add_parser(
@@ -198,15 +208,27 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="optional local Stable-Baselines3 checkpoint; defaults to the --agent baseline",
     )
-    transfer.add_argument("--policy-algorithm", choices=("dqn", "ppo"), default="ppo")
+    transfer.add_argument(
+        "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
+    )
     transfer.add_argument("--output", type=Path, default=Path("artifacts/transfer.jsonl"))
     transfer.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    transfer.add_argument(
+        "--report",
+        type=Path,
+        help="optional self-contained HTML transfer table",
+    )
     _add_significance_arguments(transfer, default_reference="small/easy")
 
     train = commands.add_parser(
         "train", help="train an optional Stable-Baselines3 policy on generated scenarios"
     )
-    train.add_argument("--algorithm", choices=("dqn", "ppo"), default="dqn")
+    train.add_argument(
+        "--algorithm",
+        choices=("dqn", "ppo", "maskable-ppo"),
+        default="maskable-ppo",
+        help="maskable-ppo respects the environment's action mask during training",
+    )
     train.add_argument("--size", choices=("small", "medium", "large"), default="medium")
     train.add_argument("--difficulty", choices=("easy", "medium", "hard"), default="hard")
     train.add_argument("--seed", type=int, default=42)
@@ -239,6 +261,7 @@ def _config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         stochastic=not args.deterministic,
         observation=cast(ObservationMode, args.observation),
         defender=cast(DefenderMode, args.defender),
+        discovery=cast(DiscoveryMode, args.discovery),
     )
 
 
@@ -256,6 +279,7 @@ def _run_benchmark(args: argparse.Namespace) -> int:
     print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
     print(f"  dynamics  : {'stochastic' if config.stochastic else 'deterministic'}")
     print(f"  defender  : {config.defender}")
+    print(f"  discovery : {config.discovery}")
     for name, metric in metrics.items():
         print(
             f"  {name:<14} success={metric.success_rate:5.1%} "
@@ -296,6 +320,52 @@ def _run_ablation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _transfer_view_model(
+    metrics: dict[str, BenchmarkMetrics],
+    config: ExperimentConfig,
+    policy_label: str,
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    """Build the view model behind the self-contained transfer report."""
+
+    comparisons = (
+        [
+            asdict(item) | {"significant": item.significant}
+            for item in compare_benchmarks(
+                metrics,
+                args.compare_to,
+                metric=args.metric,
+                alpha=args.alpha,
+                iterations=args.resamples,
+            )
+        ]
+        if args.compare_to in metrics
+        else []
+    )
+    return {
+        "policy": policy_label,
+        "reference": args.compare_to,
+        "seeds": list(benchmark_seeds(config)),
+        "stages": [
+            {key: value for key, value in asdict(metric).items() if key != "outcomes"}
+            for metric in metrics.values()
+        ],
+        "comparisons": comparisons,
+        "conditions": [
+            ["Dynamics", "stochastic" if config.stochastic else "deterministic"],
+            ["Defender", config.defender],
+            ["Discovery", config.discovery],
+            ["Reward", config.reward_strategy],
+            ["Metric", args.metric],
+        ],
+        "note": (
+            "Every class is evaluated on the same seed list, so the episodes are paired and "
+            "the difference column is a paired sign-flip permutation test against the "
+            f"'{args.compare_to}' class. Step budgets scale with scenario size."
+        ),
+    }
+
+
 def _stage_env_builder(
     stage: CurriculumStage, step_budget: int, observation_config: ObservationConfig
 ) -> Callable[[], StageEnv]:
@@ -321,16 +391,17 @@ def _run_transfer(args: argparse.Namespace) -> int:
         policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
         label = args.policy_algorithm
 
-        def agent_factory(seed: int) -> Agent:
-            del seed
+        def agent_factory(stage: CurriculumStage, seed: int) -> Agent:
+            del stage, seed
             return policy
     else:
         label = config.agent
 
-        def agent_factory(seed: int) -> Agent:
+        def agent_factory(stage: CurriculumStage, seed: int) -> Agent:
+            # The baseline must see the scenario it will act in, not the configured one.
             return create_agent(
                 config.agent,
-                generate_scenario(config.size, config.difficulty, seed),
+                generate_scenario(stage.size, stage.difficulty, seed),
                 seed=seed,
             )
 
@@ -345,6 +416,7 @@ def _run_transfer(args: argparse.Namespace) -> int:
     output = write_results(metrics, args.output, args.format)
     print("RLAttack transfer evaluation")
     print(f"  policy    : {label}")
+    print("  observati.: curriculum (transfer requires one shared interface)")
     print(f"  seeds     : {config.benchmark_episodes} shared across every scenario class")
     print(f"  defender  : {config.defender}")
     for name, metric in metrics.items():
@@ -356,6 +428,11 @@ def _run_transfer(args: argparse.Namespace) -> int:
         )
     _print_comparisons(metrics, args)
     print(f"  export    : {output}")
+    if args.report is not None:
+        report = write_transfer_report(
+            _transfer_view_model(metrics, config, label, args), args.report
+        )
+        print(f"  report    : {report}")
     return 0
 
 
@@ -395,6 +472,9 @@ def _run_training(args: argparse.Namespace) -> int:
         labels = ", ".join(stage.label for stage in stages)
         print(f"Trained {args.algorithm} curriculum ({labels}) into {args.output_dir.resolve()}")
         return 0
+    if args.algorithm == "maskable-ppo":
+        print("Masked training requires --curriculum; rerun with --curriculum")
+        return 1
     if args.algorithm == "dqn":
         train_dqn(
             env_factory,

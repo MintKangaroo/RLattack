@@ -8,6 +8,7 @@ from rlattack import __version__
 from rlattack.experiment import (
     AgentName,
     DefenderMode,
+    DiscoveryMode,
     ExperimentConfig,
     build_dashboard_data,
 )
@@ -56,6 +57,7 @@ def create_app() -> Any:
         benchmark_episodes: int = 8,
         stochastic: bool = True,
         defender: str = "passive",
+        discovery: str = "exact",
     ) -> dict[str, object]:
         try:
             config = ExperimentConfig(
@@ -68,6 +70,7 @@ def create_app() -> Any:
                 benchmark_episodes=benchmark_episodes,
                 stochastic=stochastic,
                 defender=cast(DefenderMode, defender),
+                discovery=cast(DiscoveryMode, discovery),
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error

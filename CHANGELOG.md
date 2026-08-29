@@ -3,6 +3,61 @@
 All notable changes to RLAttack are recorded here. The project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-29
+
+### Added
+
+- **Action masking in training** (`maskable-ppo`, via `sb3-contrib`). The environment
+  already published an action mask; training now uses it. Without it only 1-2% of the
+  targeted action space is valid in any state (4 of 288 at reset on a small scenario),
+  and a 100k-step unmasked PPO curriculum converged on a degenerate policy - three
+  actions then `stop`, 0% success and an identical 4-step episode in all nine scenario
+  classes. `action_masks()` exposes the mask as booleans and `StageEnv` delegates it.
+  Forwarding the mask at evaluation is part of a maskable policy's interface, not a
+  correction; unmasked `dqn`/`ppo` checkpoints are still evaluated without it.
+- **Defender response latency and noisy telemetry.** The defender previously read the
+  attacker's exact risk and acted the instant it crossed the threshold. It now reads a
+  noisy estimate (`observation_noise`) and its decision lands `response_latency` steps
+  later, so evasion is a timing problem. False positives are counted in `info`.
+- **Noisy neighbour discovery** (`DynamicsConfig.noisy_discovery`). With exact adjacency
+  the action mask *was* the topology - it offered `discover_host` for precisely the
+  adjacent hosts. Under noisy discovery any undiscovered host can be probed, only
+  adjacent ones can succeed, and probing re-opens once every candidate has been missed
+  (without which a chain topology deadlocks).
+- **Condition strip and defender tile** in the dashboard report, plus defender and
+  discovery controls, and reward confidence intervals in the baseline rows. A report
+  now states the conditions it ran under.
+- **`rlattack transfer --report`** writes a self-contained transfer table with paired
+  significance tests against a reference class.
+- Published curriculum policies and their results in `docs/results.md`: a MaskablePPO
+  curriculum matches the graph oracle's success and detection rate on `medium/hard`
+  (96.9% / 3.1%) and earns significantly more reward (+1.04, 95% CI [+0.11, +1.83],
+  p = 0.030) by taking quieter rather than shorter paths, and holds 87-100% on the
+  classes it trained on while trailing the oracle by 17-25 points on the held-out
+  `large` classes.
+
+### Fixed
+
+- **The defender shared the attacker's random stream.** Enabling a defender shifted
+  the attacker's draws, so a passive/adaptive comparison on one seed compared two
+  different episodes and was not paired at all - in 1 of 12 episodes an entirely inert
+  defender changed the outcome. The defender now draws from its own seeded stream, and
+  a regression test asserts an inert defender leaves the attacker's episode identical.
+- **Transfer baselines were built from the wrong scenario.** `evaluate_transfer` took a
+  seed-only agent factory and the CLI built the baseline from the *configured* size and
+  difficulty, so a graph-aware baseline like `ShortestPathOracle` was constructed from
+  one scenario class and then run against the other eight, with a route and indices
+  belonging to a different graph. It still acted, via its greedy fallback, so the table
+  looked plausible while eight of nine rows measured a mis-indexed oracle. Corrected,
+  the oracle scores 83-100% across all nine classes rather than 18-38% on the large
+  ones, so the "generalization gradient" reported for 0.4.0 was mostly this bug. The
+  factory now receives the stage it will act in.
+
+### Known gaps
+
+- The dashboard screenshots still show the v0.2 UI; re-capturing them needs a browser.
+- Learned policies are evaluated under the control condition only.
+
 ## [0.4.0] - 2026-08-29
 
 ### Added
@@ -43,9 +98,11 @@ All notable changes to RLAttack are recorded here. The project follows
   with scenario size. The absolute remaining steps moved to `info`.
 - Detection risk is normalized by network size (`normalize_risk_by_size`, on by
   default). As an absolute budget of noisy actions it made `large` scenarios unwinnable
-  purely because they take more steps - the graph oracle scored 0/16 on every large
-  class. It now scores 19-38% there, and the remaining gap is a real generalization
-  gradient.
+  purely because they take more steps. Re-measured in 0.5.0 after the transfer-baseline
+  fix: with absolute risk the graph oracle scores 0% on `large/easy` and 0-50% across
+  the large classes; normalized it scores 88-100%. (The "19-38%" figure reported when
+  0.4.0 was written was measured with the mis-indexed transfer baseline fixed in
+  0.5.0.)
 - Curriculum stages scale the step budget with scenario size, so a transfer table does
   not report budget exhaustion as a generalization failure.
 

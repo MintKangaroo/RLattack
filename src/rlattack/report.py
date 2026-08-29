@@ -28,6 +28,25 @@ def write_dashboard_report(data: dict[str, Any], output_path: Path) -> Path:
     return output_path.resolve()
 
 
+def render_transfer_report(data: dict[str, Any]) -> str:
+    """Render a compact, dependency-free transfer table."""
+
+    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
+    return (
+        _TRANSFER_START
+        + f"<script>window.__RLATTACK_TRANSFER__={payload};</script>"
+        + _TRANSFER_END
+    )
+
+
+def write_transfer_report(data: dict[str, Any], output_path: Path) -> Path:
+    """Write a portable transfer report and return its resolved path."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(render_transfer_report(data), encoding="utf-8")
+    return output_path.resolve()
+
+
 _HTML_START = """<!doctype html>
 <html lang="en">
 <head>
@@ -83,6 +102,14 @@ _HTML_START = """<!doctype html>
       gap:10px; padding:14px; border:1px solid var(--line); border-radius:18px;
       background:#0a1512dd; box-shadow:var(--shadow); margin-bottom:14px;
     }
+    .conditions { display:flex; flex-wrap:wrap; gap:8px; margin:-8px 0 26px }
+    .cond {
+      display:inline-flex; gap:8px; align-items:center; padding:7px 12px; border-radius:999px;
+      background:var(--panel-2); border:1px solid var(--line); font-size:11px; letter-spacing:.06em;
+      text-transform:uppercase; font-weight:700; color:var(--muted);
+    }
+    .cond b { color:var(--ink); font-weight:750; letter-spacing:0; text-transform:none }
+    .cond.treatment { border-color:#ffcb6655; color:var(--amber) }
     .field { position:relative }
     .field label { position:absolute; top:8px; left:12px; color:#718a81; font-size:9px; font-weight:750; letter-spacing:.12em; text-transform:uppercase; z-index:1 }
     .field select,.field input {
@@ -201,6 +228,8 @@ _HTML_START = """<!doctype html>
       <div class="field"><label for="reward">Reward</label><select id="reward"><option value="shaped">Shaped</option><option value="risk-aware">Risk-aware</option><option value="cost-aware">Cost-aware</option><option value="sparse">Sparse</option></select></div>
       <div class="field"><label for="seed">Seed</label><input id="seed" type="number" min="0" step="1"></div>
       <div class="field"><label for="budget">Step budget</label><input id="budget" type="number" min="1" max="500"></div>
+      <div class="field"><label for="defender">Defender</label><select id="defender"><option value="passive">Passive (control)</option><option value="adaptive">Adaptive</option></select></div>
+      <div class="field"><label for="discovery">Discovery</label><select id="discovery"><option value="exact">Exact adjacency</option><option value="noisy">Noisy scan</option></select></div>
       <button class="run" id="run" type="submit">Run experiment ↗</button>
     </form>
     <div class="notice" id="notice"></div>
@@ -210,7 +239,10 @@ _HTML_START = """<!doctype html>
       <article class="stat" style="--accent:#71a7ff"><span class="k">Cumulative reward</span><strong class="v" id="stat-reward">—</strong><small id="stat-reward-note"></small></article>
       <article class="stat" style="--accent:#ffcb66"><span class="k">Detection risk</span><strong class="v" id="stat-risk">—</strong><small>normalized terminal risk</small></article>
       <article class="stat" style="--accent:#c78bff"><span class="k">Graph path cost</span><strong class="v" id="stat-cost">—</strong><small>sum of traversed edge weights</small></article>
+      <article class="stat" style="--accent:#ff6e6e"><span class="k">Defender responses</span><strong class="v" id="stat-defender">—</strong><small id="stat-defender-note"></small></article>
     </section>
+
+    <section class="conditions" id="conditions"></section>
 
     <section class="main-grid">
       <article class="panel">
@@ -261,6 +293,7 @@ _HTML_END = """
       const c=data.config;
       $('size').value=c.size; $('difficulty').value=c.difficulty; $('agent').value=c.agent;
       $('reward').value=c.reward_strategy; $('seed').value=c.seed; $('budget').value=c.step_budget;
+      $('defender').value=c.defender; $('discovery').value=c.discovery;
     }
 
     function renderGraph(data) {
@@ -305,6 +338,20 @@ _HTML_END = """
       $('stat-reward-note').textContent=`${c.reward_strategy} reward strategy`;
       $('stat-risk').textContent=pct(e.detection_risk);
       $('stat-cost').textContent=num(e.path_cost,1);
+      $('stat-defender').textContent=c.defender==='passive'?'—':String(e.defender_actions);
+      $('stat-defender-note').textContent=c.defender==='passive'
+        ? 'passive control condition'
+        : `${e.revoked_credentials} credential${e.revoked_credentials===1?'':'s'} revoked`;
+      const conditions=[
+        ['Dynamics', c.stochastic?'Stochastic':'Deterministic', c.stochastic],
+        ['Defender', c.defender==='adaptive'?'Adaptive':'Passive', c.defender==='adaptive'],
+        ['Discovery', c.discovery==='noisy'?'Noisy scan':'Exact adjacency', c.discovery==='noisy'],
+        ['Observation', c.observation==='curriculum'?'Fixed capacity':'Scenario sized', c.observation==='curriculum'],
+        ['Benchmark', data.benchmark_protocol.mode, false],
+      ];
+      $('conditions').innerHTML=conditions.map(([key,value,treatment]) =>
+        `<span class="cond ${treatment?'treatment':''}">${esc(key)} <b>${esc(value)}</b></span>`
+      ).join('');
       $('scenario-sub').textContent=`${s.id} · ${s.hosts} hosts · ${s.services} services · ${s.edges} links`;
       $('agent-tag').textContent=e.agent_label;
       const outcome=$('outcome');
@@ -317,7 +364,7 @@ _HTML_END = """
         `<li><b>${String(index+1).padStart(2,'0')}</b><span>${esc(node)}</span><small>${index===0?'ENTRY':index===s.oracle_route.length-1?'GOAL':'PIVOT'}</small></li>`
       ).join('');
       $('benchmarks').innerHTML=data.benchmarks.map(metric =>
-        `<div class="bench-row"><span>${esc(metric.label)}</span><div class="bar"><i style="width:${Math.max(1,metric.success_rate*100)}%"></i></div><strong>${pct(metric.success_rate)}<br><small>${num(metric.mean_steps,1)}±${num(metric.std_steps,1)} st · det ${pct(metric.detection_rate)}</small></strong></div>`
+        `<div class="bench-row"><span>${esc(metric.label)}</span><div class="bar"><i style="width:${Math.max(1,metric.success_rate*100)}%"></i></div><strong>${pct(metric.success_rate)}<br><small>${num(metric.mean_steps,1)}±${num(metric.std_steps,1)} st · det ${pct(metric.detection_rate)} · R ${num(metric.mean_reward,1)} [${num(metric.reward_ci_low,1)}, ${num(metric.reward_ci_high,1)}]</small></strong></div>`
       ).join('');
       $('trace').innerHTML=e.trace.map(row =>
         `<tr><td>${row.step}</td><td class="action">${esc(row.action)}</td><td class="action">${esc(row.target_id??'—')}</td><td>${row.state.discovered_hosts}H · ${row.state.known_services}S · ${row.state.acquired_privileges}P</td><td>${pct(row.detection_risk)}</td><td>${row.reward>=0?'+':''}${num(row.reward)}</td><td><span class="pill ${row.valid&&row.outcome!=='failed'?'':'invalid'}">${esc(row.outcome)}</span></td></tr>`
@@ -335,6 +382,7 @@ _HTML_END = """
       const query=new URLSearchParams({
         size:$('size').value,difficulty:$('difficulty').value,agent:$('agent').value,
         reward_strategy:$('reward').value,seed:$('seed').value,step_budget:$('budget').value,
+        defender:$('defender').value,discovery:$('discovery').value,
         benchmark_episodes:model.config.benchmark_episodes
       });
       try {
@@ -355,6 +403,106 @@ _HTML_END = """
       link.download=`rlattack-${model.config.seed}.json`; link.click(); URL.revokeObjectURL(link.href);
     });
     render(model);
+  </script>
+</body>
+</html>
+"""
+
+
+_TRANSFER_START = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>RLAttack · Transfer</title>
+  <style>
+    :root {
+      --bg:#07100e; --panel:#0c1815; --line:#20352f; --ink:#edf7f2; --muted:#91a69f;
+      --green:#56f39a; --amber:#ffcb66; --red:#ff6e6e;
+    }
+    * { box-sizing:border-box }
+    body {
+      margin:0; padding:32px 20px 60px; background:var(--bg); color:var(--ink);
+      font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;
+      font-feature-settings:"tnum"; letter-spacing:-.01em;
+    }
+    main { width:min(1080px,100%); margin:auto }
+    h1 { font-size:22px; margin:0 0 6px; letter-spacing:-.02em }
+    .sub { color:var(--muted); font-size:13px; margin-bottom:26px }
+    .chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:26px }
+    .chip {
+      padding:6px 12px; border-radius:999px; background:var(--panel); border:1px solid var(--line);
+      font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:700;
+    }
+    .chip b { color:var(--ink); text-transform:none; letter-spacing:0 }
+    .wrap { overflow-x:auto; border:1px solid var(--line); border-radius:16px; background:var(--panel) }
+    table { border-collapse:collapse; width:100%; min-width:760px; font-size:13px }
+    th,td { padding:12px 14px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap }
+    th:first-child,td:first-child { text-align:left; font-family:ui-monospace,SFMono-Regular,monospace }
+    thead th {
+      font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--muted); font-weight:750;
+    }
+    tbody tr:last-child td { border-bottom:0 }
+    .bar { position:relative; display:block; height:6px; border-radius:99px; background:#ffffff12; margin-top:6px }
+    .bar i { position:absolute; inset:0 auto 0 0; border-radius:99px; background:var(--green) }
+    .sig { color:var(--amber); font-weight:750 }
+    .ref { color:var(--muted) }
+    footer { margin-top:22px; color:var(--muted); font-size:12px; line-height:1.6 }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Transfer across scenario classes</h1>
+    <div class="sub" id="sub"></div>
+    <div class="chips" id="chips"></div>
+    <div class="wrap">
+      <table>
+        <thead><tr>
+          <th>Scenario class</th><th>Success</th><th>Detected</th><th>Steps</th>
+          <th>Reward</th><th>95% CI</th><th>vs reference</th><th>p</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <footer id="note"></footer>
+  </main>
+"""
+
+
+_TRANSFER_END = """
+  <script>
+    const data = window.__RLATTACK_TRANSFER__;
+    const $ = (id) => document.getElementById(id);
+    const esc = (v) => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const pct = (v) => `${(Number(v) * 100).toFixed(1)}%`;
+    const num = (v, d=2) => Number(v).toFixed(d);
+
+    $('sub').textContent = `${esc(data.policy)} · ${data.seeds.length} seeds shared across every class`;
+    $('chips').innerHTML = data.conditions
+      .map(([k, v]) => `<span class="chip">${esc(k)} <b>${esc(v)}</b></span>`).join('');
+
+    const tests = Object.fromEntries((data.comparisons || []).map(c => [c.candidate, c]));
+    $('rows').innerHTML = data.stages.map(stage => {
+      const test = tests[stage.agent_name];
+      const isRef = stage.agent_name === data.reference;
+      const diff = isRef ? '<span class="ref">reference</span>'
+        : test ? `<span class="${test.significant ? 'sig' : ''}">${test.mean_difference >= 0 ? '+' : ''}${num(test.mean_difference)}</span>`
+        : '—';
+      const p = isRef ? '<span class="ref">—</span>' : test ? num(test.p_value, 4) : '—';
+      return `<tr>
+        <td>${esc(stage.agent_name)}</td>
+        <td>${pct(stage.success_rate)}<span class="bar"><i style="width:${Math.max(1, stage.success_rate * 100)}%"></i></span></td>
+        <td>${pct(stage.detection_rate)}</td>
+        <td>${num(stage.mean_steps, 1)} ± ${num(stage.std_steps, 1)}</td>
+        <td>${num(stage.mean_reward)}</td>
+        <td>[${num(stage.reward_ci_low, 1)}, ${num(stage.reward_ci_high, 1)}]</td>
+        <td>${diff}</td>
+        <td>${p}</td>
+      </tr>`;
+    }).join('');
+
+    $('note').textContent = data.note;
   </script>
 </body>
 </html>

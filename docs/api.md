@@ -105,11 +105,13 @@ rlattack transfer --episodes 32 --policy artifacts/policies/final.zip \
 
 ```bash
 python -m pip install -e ".[training]"
+rlattack train --algorithm maskable-ppo --curriculum
 rlattack train --algorithm ppo --size medium --timesteps 200000
-rlattack train --algorithm ppo --curriculum
 ```
 
-`--curriculum`은 하나의 policy를 여러 stage에 걸쳐 이어서 학습합니다.
+`--curriculum`은 하나의 policy를 여러 stage에 걸쳐 이어서 학습합니다. 기본 algorithm은
+`maskable-ppo`입니다. 각 상태에서 유효한 action이 전체의 1~2%뿐이라, masking 없이는
+탐색 예산이 invalid action에 소모되어 정책이 즉시 `stop`하도록 수렴합니다.
 
 ## Portable report
 

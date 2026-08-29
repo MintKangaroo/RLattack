@@ -53,16 +53,27 @@
 32. Add a scenario curriculum and a transfer evaluation across every size and
     difficulty class. (completed)
 
+## v0.5 - closing the loop
+
+33. Train curriculum policies and report their transfer table against the baselines
+    with significance tests. (completed)
+34. Surface the defender and transfer views in the reports. (completed; the dashboard
+    screenshots still need a browser and are not re-captured)
+35. Model defender response latency and noisy telemetry, so evasion is a timing problem
+    rather than a threshold problem. (completed)
+36. Reveal neighbours through a noisy scan model rather than an exact adjacency check.
+    (completed)
+37. Train against the environment's action mask, without which only 1-2% of the action
+    space is valid and learning collapses onto stopping immediately. (completed)
+
 ## Next
 
-33. Train and publish a DQN and a PPO curriculum policy, and report the transfer table
-    against the baselines with significance tests.
-34. Re-capture the dashboard screenshots, and surface the defender and transfer views
-    in the report.
-35. Model defender response latency and false positives, so evasion is a timing
-    problem rather than a threshold problem.
-36. Partially observable graph structure: reveal neighbours through a noisy scan model
-    rather than an exact adjacency check.
+38. Longer training budgets and a hyperparameter sweep; the published policies are
+    100k-step curriculum runs, which is a floor rather than a ceiling.
+39. Re-capture the dashboard and transfer screenshots in an environment with a browser.
+40. Evaluate learned policies under the adaptive defender and noisy discovery
+    conditions, not only the control condition.
+41. A defender that adapts its own policy, turning the setup into a two-player game.
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.
