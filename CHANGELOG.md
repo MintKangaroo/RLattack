@@ -33,6 +33,11 @@ All notable changes to RLAttack are recorded here. The project follows
 
 ### Fixed
 
+- **The defender shared the attacker's random stream.** Enabling a defender shifted
+  the attacker's draws, so a passive/adaptive comparison on one seed compared two
+  different episodes and was not paired at all - in 1 of 12 episodes an entirely inert
+  defender changed the outcome. The defender now draws from its own seeded stream, and
+  a regression test asserts an inert defender leaves the attacker's episode identical.
 - **Transfer baselines were built from the wrong scenario.** `evaluate_transfer` took a
   seed-only agent factory and the CLI built the baseline from the *configured* size and
   difficulty, so a graph-aware baseline like `ShortestPathOracle` was constructed from

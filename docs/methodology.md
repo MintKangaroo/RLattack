@@ -97,6 +97,10 @@ Reward 설정과 함께 Scenario ID, Seed, Environment 버전, Algorithm을 저�
 
 Defender는 기본적으로 꺼져 있습니다. 대조군 없이 처치군만 보고하는 것을 막기 위해서입니다.
 
+Defender는 공격자와 **분리된 난수 스트림**을 사용합니다. 같은 스트림을 공유하면 아무 행동도
+하지 않는 Defender조차 공격자의 난수 소비를 밀어내어 Episode를 바꿉니다. 그러면 같은 Seed의
+대조군과 처치군이 서로 다른 Episode를 보게 되어 Pairing이 깨집니다.
+
 ### 5.2 유의성 검정
 
 Benchmark는 모든 Agent를 동일한 Seed 목록으로 실행하므로 Episode가 **Paired**입니다.

@@ -604,3 +604,39 @@ def test_boolean_action_masks_are_exposed_for_maskable_learners() -> None:
 
     assert masks.dtype == np.bool_
     assert masks.tolist() == np.asarray(info["action_mask"]).astype(bool).tolist()
+
+
+def test_enabling_the_defender_does_not_shift_the_attacker_stream() -> None:
+    """Passive and adaptive must be paired: same seed, same attacker draws.
+
+    The defender drawing from the shared stream made an inert defender change the
+    attacker's outcomes, quietly confounding every control/treatment comparison.
+    """
+
+    def outcomes(defender: DefenderConfig) -> tuple[str, ...]:
+        env = AttackPathEnv(
+            generate_scenario("medium", "hard", 7), step_budget=60, defender=defender
+        )
+        env.reset(seed=3)
+        trace = []
+        terminated = truncated = False
+        while not terminated and not truncated:
+            mask = env.action_mask()
+            action = np.int64(int(np.flatnonzero(mask)[0]))
+            _, _, terminated, truncated, info = env.step(action)
+            trace.append(str(info["outcome"]))
+        return tuple(trace)
+
+    # Responds on every step, but its responses change nothing: any divergence can
+    # only come from the defender consuming the attacker's random stream.
+    inert = DefenderConfig(
+        enabled=True,
+        alert_threshold=0.0,
+        response_cooldown=1,
+        response_latency=0,
+        hardening_step=0.0,
+        revocation_probability=0.0,
+        observation_noise=0.5,
+    )
+
+    assert outcomes(DefenderConfig()) == outcomes(inert)

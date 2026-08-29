@@ -60,6 +60,9 @@ TARGET_KINDS: tuple[str, ...] = (
 )
 
 
+_DEFENDER_STREAM = 0x5EED
+
+
 def _capacity(records: tuple[Any, ...], configured: int | None) -> int:
     """Return the observation width for one record kind.
 
@@ -358,6 +361,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._defender_false_positives = 0
         self._last_defender_response = DefenderResponse()
         self._pending_response: tuple[DefenderResponse, int, bool] | None = None
+        self._defender_rng = np.random.default_rng(_DEFENDER_STREAM)
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -365,6 +369,12 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         super().reset(seed=seed)
         del options
         self._reset_state()
+        # The defender draws from its own stream so that enabling it does not shift the
+        # attacker's draws. Otherwise a passive/adaptive comparison on the same seed is
+        # not actually paired: the control and the treatment see different episodes.
+        self._defender_rng = np.random.default_rng(
+            None if seed is None else seed ^ _DEFENDER_STREAM
+        )
         return self._observation(), {
             "action_mask": self.action_mask(),
             "detection_risk": self._detection_risk,
@@ -734,7 +744,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
                     int(index) for index in np.flatnonzero(self._acquired_credentials)
                 ),
             ),
-            self.np_random,
+            self._defender_rng,
         )
         if response.name == "none":
             return
@@ -790,7 +800,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
 
         if self.defender.observation_noise <= 0.0:
             return self._detection_risk
-        noise = float(self.np_random.normal(0.0, self.defender.observation_noise))
+        noise = float(self._defender_rng.normal(0.0, self.defender.observation_noise))
         return min(1.0, max(0.0, self._detection_risk + noise))
 
     def _revoke_credential(self, index: int) -> None:
