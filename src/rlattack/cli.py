@@ -39,6 +39,14 @@ from rlattack.experiment import (
     run_reward_ablation,
 )
 from rlattack.export import write_results
+from rlattack.families import (
+    HELD_OUT_FAMILIES,
+    FamilyShape,
+    evaluate_families,
+)
+from rlattack.families import (
+    build_scenario as build_family_scenario,
+)
 from rlattack.game import BanditAttacker, play
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.importers import import_scenario_file
@@ -285,6 +293,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     game.add_argument("--exploration", type=float, default=0.15)
     game.add_argument("--output", type=Path, default=Path("artifacts/game.jsonl"))
+
+    families = commands.add_parser(
+        "families",
+        help="evaluate one policy on structural families the generator cannot produce",
+    )
+    _add_experiment_arguments(families)
+    families.add_argument(
+        "--policy",
+        type=Path,
+        help="optional local Stable-Baselines3 checkpoint; defaults to the --agent baseline",
+    )
+    families.add_argument(
+        "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
+    )
+    families.add_argument("--hosts", type=int, default=8)
+    families.add_argument("--output", type=Path, default=Path("artifacts/families.jsonl"))
+    families.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    _add_significance_arguments(families, default_reference="chain")
 
     equilibrium = commands.add_parser(
         "equilibrium",
@@ -679,6 +705,53 @@ def _run_game(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_families(args: argparse.Namespace) -> int:
+    """Evaluate one policy on the held-out structural families."""
+
+    config = _config_from_args(args)
+    if args.policy is not None:
+        policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
+        label = str(args.policy_algorithm)
+
+        def agent_factory(family: str, seed: int) -> Agent:
+            del family, seed
+            return policy
+    else:
+        label = config.agent
+
+        def agent_factory(family: str, seed: int) -> Agent:
+            return create_agent(
+                config.agent, build_family_scenario(family, args.hosts, seed), seed=seed
+            )
+
+    metrics = evaluate_families(
+        agent_factory,
+        benchmark_seeds(config),
+        hosts=args.hosts,
+        step_budget=config.step_budget,
+        reward_strategy=config.reward_strategy,
+        dynamics=config.dynamics(),
+        defender=config.defender_config(),
+    )
+    output = write_results(metrics, args.output, args.format)
+    print("RLAttack structural family evaluation")
+    print(f"  policy    : {label}")
+    print(f"  topology  : {args.hosts} hosts x {config.benchmark_episodes} seeds")
+    print(f"  discovery : {config.discovery}")
+    for name, metric in metrics.items():
+        shape = FamilyShape.measure(name, args.hosts, config.seed)
+        held_out = " (held out)" if name in HELD_OUT_FAMILIES else ""
+        print(
+            f"  {name:<6} success={metric.success_rate:5.1%} "
+            f"detected={metric.detection_rate:5.1%} "
+            f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
+            f"edges={shape.edges:3} diameter={shape.diameter}{held_out}"
+        )
+    _print_comparisons(metrics, args)
+    print(f"  export    : {output}")
+    return 0
+
+
 def _run_equilibrium(args: argparse.Namespace) -> int:
     """Solve the attacker x defender policy grid and report the mixtures."""
 
@@ -881,6 +954,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_sweep(args)
     if args.command == "equilibrium":
         return _run_equilibrium(args)
+    if args.command == "families":
+        return _run_families(args)
     if args.command == "train":
         return _run_training(args)
 

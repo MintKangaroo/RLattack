@@ -940,3 +940,66 @@ def test_cli_adversarial_training_attaches_a_learning_defender(
     )
     assert policies[0] is not None
     assert "adversarial/exact" in capsys.readouterr().out
+
+
+def test_cli_families_evaluates_the_held_out_topologies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "families.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "families",
+                "--agent",
+                "greedy",
+                "--episodes",
+                "3",
+                "--hosts",
+                "6",
+                "--deterministic",
+                "--resamples",
+                "100",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert "structural family evaluation" in printed
+    assert "(held out)" in printed
+    assert {row["agent"] for row in rows} == {"chain", "star", "tree", "mesh", "ring"}
+
+
+def test_cli_families_accepts_a_trained_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class StubAgent:
+        def predict(self, observation: object, info: dict[str, object]) -> np.int64:
+            return np.int64(int(Action.STOP) * int(cast(int, info["target_count"])))
+
+    monkeypatch.setattr(cli, "load_policy", lambda path, algorithm: StubAgent())
+
+    assert (
+        cli.main(
+            [
+                "families",
+                "--episodes",
+                "2",
+                "--hosts",
+                "5",
+                "--resamples",
+                "100",
+                "--policy",
+                str(tmp_path / "model.zip"),
+                "--output",
+                str(tmp_path / "f.jsonl"),
+            ]
+        )
+        == 0
+    )
+
+    assert "policy    : maskable-ppo" in capsys.readouterr().out
