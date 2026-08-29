@@ -17,6 +17,7 @@ from rlattack.game import (
     GameResult,
     attacker_reward,
     defender_reward,
+    episode_defender_reward,
     play,
 )
 from rlattack.generator import generate_scenario
@@ -208,7 +209,7 @@ def test_the_contextual_defender_is_validated_and_records_visits() -> None:
 
     assert len(table) == 1
     assert next(iter(table.values())) == 1.0
-    assert context.key == (1, True, 0)
+    assert context.key == (1, True, 0, 0)
 
 
 def test_the_contextual_defender_exploits_what_it_learned() -> None:
@@ -265,3 +266,48 @@ def test_a_fixed_attacker_reports_no_learned_preference() -> None:
 
     assert result.attacker_pulls == {}
     assert result.attacker_values == {}
+
+
+def test_budget_pressure_is_part_of_the_defender_context() -> None:
+    relaxed = DefenderContext(alert_band=1, has_credentials=True, phase=1, budget_pressure=0)
+    strained = DefenderContext(alert_band=1, has_credentials=True, phase=1, budget_pressure=2)
+
+    assert relaxed.key != strained.key
+
+    defender = ContextualDefender(exploration=0.0)
+    defender.reset(seed=0)
+    defender.start_episode()
+    defender.action_for(relaxed)
+    defender.action_for(strained)
+    defender.finish_episode(1.0)
+
+    assert len(defender.table) == 2, "budget pressure must select a distinct policy entry"
+
+
+def test_an_episode_can_be_scored_straight_from_info() -> None:
+    info = {
+        "objective_captured": False,
+        "detected": True,
+        "steps": 12,
+        "detection_risk": 0.9,
+        "path_cost": 3.0,
+        "defender_actions": 2,
+        "defender_false_positives": 1,
+    }
+
+    scored = episode_defender_reward(info)
+    equivalent = defender_reward(
+        EpisodeOutcome(
+            seed=0,
+            success=False,
+            detected=True,
+            steps=12,
+            reward=0.0,
+            detection_risk=0.9,
+            path_cost=3.0,
+            defender_actions=2,
+            defender_false_positives=1,
+        )
+    )
+
+    assert scored == equivalent

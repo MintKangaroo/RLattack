@@ -15,6 +15,7 @@ from rlattack.curriculum import (
     scale_curriculum,
     stage_env_factory,
 )
+from rlattack.defender import ContextualDefender
 from rlattack.env import DynamicsConfig, ObservationConfig
 from rlattack.generator import generate_scenario
 
@@ -164,3 +165,39 @@ def test_a_stage_can_sample_earlier_stages_alongside_its_own() -> None:
     assert len(sizes) > 1, "a mixed stage must draw from more than its own class"
     assert env.pool_size == 4
     assert env.observation_space == stage_env_factory(earlier)(1).observation_space
+
+
+def test_the_defender_learns_across_training_episodes() -> None:
+    """Stable-Baselines3 owns the episode loop, so the defender is driven from reset."""
+
+    stage = CurriculumStage("small", "easy")
+    policy = ContextualDefender()
+    policy.reset(seed=0)
+    env = StageEnv(stage, (1, 2), stage_env_factory(stage), (), policy)
+
+    assert env.current.defender_policy is policy
+    assert env.current.defender is policy.config
+
+    for episode in range(6):
+        env.reset(seed=episode)
+        terminated = truncated = False
+        while not terminated and not truncated:
+            action = np.int64(int(np.flatnonzero(env.action_masks())[0]))
+            _, _, terminated, truncated, _ = env.step(action)
+    env.reset(seed=99)
+
+    assert policy.table, "the defender must have scored the finished episodes"
+
+
+def test_a_stage_without_a_defender_policy_is_untouched() -> None:
+    stage = CurriculumStage("small", "easy")
+    env = StageEnv(stage, (1,), stage_env_factory(stage))
+
+    assert env.defender_policy is None
+    assert env.current.defender_policy is None
+
+    env.reset(seed=0)
+    action = np.int64(int(np.flatnonzero(env.action_masks())[0]))
+    _, _, _, _, info = env.step(action)
+
+    assert info["defender_action"] == "none"

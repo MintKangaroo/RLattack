@@ -3,6 +3,40 @@
 All notable changes to RLAttack are recorded here. The project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-29
+
+### Added
+
+- **`probed_hosts` observation channel.** Which hosts the agent had probed and missed
+  lived only in the action mask, and a maskable learner uses the mask to filter its
+  action distribution rather than as a network input - so the policy could not tell an
+  exhausted sweep from an untouched one. Retrained at the same budget, success under
+  noisy discovery moves from 0% to 6.2%. The graph oracle reaches 68.8% there, so the
+  gap is narrowed, not closed. **This changes the observation space**; policies trained
+  before this release cannot be loaded against it.
+- **`rlattack equilibrium`** solves the attacker x defender policy grid as a matrix game
+  by fictitious play, checked against matching pennies and a dominant-row game. On
+  medium/hard the equilibrium is pure - shortest-path against `fast`, value 0.75 -
+  because shortest-path dominates every other attacker row, which the command reports
+  rather than dressing up as strategy.
+- **`DefenderConfig.response_budget`** caps how many responses one episode can absorb,
+  with the overflow counted rather than silently dropped, and the learned defender reads
+  a `budget_pressure` band so it can ration. A budget of 8 beats no budget at all
+  (85.8% +/- 2.6% attacker success against 89.8% +/- 4.6%): the constraint forces the
+  defender to spend where it matters.
+- **`rlattack train --adversarial`** attaches a learning defender to the training
+  environments, driven from `StageEnv.reset` since Stable-Baselines3 owns the episode
+  loop, so the attacker trains against an opponent that adapts.
+- **`docs/importing.md`**, a mapping guide for the import contract with worked
+  conversions for MulVAL-style graphs, CyberBattleSim topologies, and edge lists.
+
+### Fixed
+
+- **The sanitizer missed fully qualified names in ordinary fields.** It checked
+  forbidden keys and strings containing a URL or dotted-quad address, so
+  `fact="hostname(webserver.corp.example)"` passed. Names of three or more dotted labels
+  are now rejected, while the simulator's own two-label hostnames stay acceptable.
+
 ## [0.7.0] - 2026-08-29
 
 ### Added

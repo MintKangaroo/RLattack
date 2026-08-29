@@ -152,6 +152,7 @@ rlattack scenario \
 | `rlattack game` | 에피소드 간 학습하는 defender와의 대전 |
 | `rlattack sweep` | hyperparameter trial 학습과 비교 |
 | `rlattack import` | 외부 attack graph(GraphML/GML/JSON)를 sanitized scenario로 변환 |
+| `rlattack equilibrium` | attacker × defender 정책 격자를 행렬 게임으로 풀이 |
 | `rlattack train` | optional DQN/PPO policy 학습 (`.[training]` 필요) |
 | `rlattack scenario` | 검증된 scenario를 JSON으로 내보내기 |
 | `rlattack dashboard` | loopback 전용 interactive dashboard와 API 실행 |
@@ -327,6 +328,8 @@ flowchart LR
 | `rlattack.conditions` | defender × discovery 조건 격자 평가 |
 | `rlattack.game` | 학습하는 공격자·방어자의 2인 게임 |
 | `rlattack.importers` | 외부 attack graph의 익명화 import |
+| `rlattack.equilibrium` | 정책 격자의 균형 분석 |
+| `rlattack.bandit` | 양쪽이 공유하는 epsilon-greedy 학습기 |
 | `rlattack.policies` | 학습된 Stable-Baselines3 checkpoint의 Agent adapter |
 | `rlattack.export` | episode 단위 JSONL/CSV batch export |
 | `rlattack.explain` | action explanation과 visited-node overlay |
@@ -407,7 +410,7 @@ make audit
 
 - Ruff lint + format
 - strict mypy
-- 230 tests (unit + reproducibility/solvability integration tests)
+- 254 tests (unit + reproducibility/solvability integration tests)
 - package statement coverage 100%
 - Gymnasium environment checker
 - FastAPI dashboard route와 loopback bind test
@@ -463,7 +466,7 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 
 현재 `v0.4.0`은 연구용 end-to-end workflow를 제공합니다. 실제 환경의 다양성을 합성 graph가
 완전히 대표하지 않으며, explainability output은 인과적 설명이나 보안 보장을 의미하지 않습니다.
-다음 확장 후보(공개 데이터셋 매핑 가이드, 게임 루프 안에서의 공격자 RL 학습, 균형 분석)는
+다음 확장 후보(noisy discovery 탐색 격차 마무리, adversarial 학습 연구, 격자 확장)는
 [Roadmap](docs/roadmap.md)에서 관리합니다. 변경 이력은 [CHANGELOG](CHANGELOG.md)를 참고하세요.
 
 ## 문서
@@ -473,6 +476,7 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 - [Experimental Methodology](docs/methodology.md)
 - [Threat Model](docs/threat-model.md)
 - [Published results](docs/results.md)
+- [Importing attack graphs](docs/importing.md)
 - [Changelog](CHANGELOG.md)
 - [Roadmap](docs/roadmap.md)
 - [Contributing](CONTRIBUTING.md)

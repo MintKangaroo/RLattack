@@ -6,7 +6,7 @@ authors:
   - name: "AI Security Lab Contributors"
 repository-code: "https://github.com/MintKangaroo/RLattack"
 license: MIT
-version: 0.7.0
+version: 0.8.0
 date-released: "2026-08-29"
 keywords:
   - reinforcement-learning

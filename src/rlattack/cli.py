@@ -23,6 +23,7 @@ from rlattack.curriculum import (
 from rlattack.dashboard import run_dashboard
 from rlattack.defender import BanditDefender, ContextualDefender, DefenderConfig
 from rlattack.env import AttackPathEnv, DynamicsConfig, ObservationConfig
+from rlattack.equilibrium import solve_grid
 from rlattack.evaluation import BenchmarkMetrics
 from rlattack.experiment import (
     REWARD_STRATEGIES,
@@ -285,6 +286,14 @@ def build_parser() -> argparse.ArgumentParser:
     game.add_argument("--exploration", type=float, default=0.15)
     game.add_argument("--output", type=Path, default=Path("artifacts/game.jsonl"))
 
+    equilibrium = commands.add_parser(
+        "equilibrium",
+        help="solve the attacker x defender policy grid as a matrix game",
+    )
+    _add_experiment_arguments(equilibrium)
+    equilibrium.add_argument("--iterations", type=int, default=20_000)
+    equilibrium.add_argument("--output", type=Path, default=Path("artifacts/equilibrium.json"))
+
     sweep = commands.add_parser(
         "sweep",
         help="train several hyperparameter trials and benchmark each resulting policy",
@@ -334,6 +343,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("sparse", "shaped", "risk-aware", "cost-aware"),
         default="risk-aware",
         help="reward strategy to train against",
+    )
+    train.add_argument(
+        "--adversarial",
+        action="store_true",
+        help="let a contextual defender learn alongside the attacker during training",
     )
     train.add_argument(
         "--forget-previous-stages",
@@ -479,6 +493,7 @@ def _stage_env_builder(
     defender: DefenderConfig | None = None,
     reward_strategy: RewardStrategy = "risk-aware",
     previous: Sequence[CurriculumStage] = (),
+    defender_policy: ContextualDefender | None = None,
 ) -> Callable[[], StageEnv]:
     """Return a zero-argument environment builder for one curriculum stage.
 
@@ -509,7 +524,7 @@ def _stage_env_builder(
     ]
 
     def build() -> StageEnv:
-        return StageEnv(stage, TRAINING_SEEDS, factory, earlier)
+        return StageEnv(stage, TRAINING_SEEDS, factory, earlier, defender_policy)
 
     return build
 
@@ -664,6 +679,35 @@ def _run_game(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_equilibrium(args: argparse.Namespace) -> int:
+    """Solve the attacker x defender policy grid and report the mixtures."""
+
+    config = _config_from_args(args)
+    solved = solve_grid(config, iterations=args.iterations)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(
+        json.dumps(asdict(solved), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print("RLAttack attacker x defender equilibrium")
+    print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
+    header = "  ".join(f"{label[:9]:>9}" for label in solved.defender_labels)
+    corner = "attacker / defender"
+    print(f"  {corner:<22} {header}")
+    for label, row in zip(solved.attacker_labels, solved.payoffs, strict=True):
+        print(f"  {label:<22} " + "  ".join(f"{value:9.3f}" for value in row))
+    print(f"  attacker  : {_format_mixture(solved.attacker_support)}")
+    print(f"  defender  : {_format_mixture(solved.defender_support)}")
+    print(f"  value     : {solved.value:.4f} (attacker mean episode reward)")
+    if len(solved.attacker_support) == 1 and len(solved.defender_support) == 1:
+        print("  note      : a pure equilibrium - this policy grid has a dominant strategy")
+    print(f"  export    : {args.output.resolve()}")
+    return 0
+
+
+def _format_mixture(mixture: dict[str, float]) -> str:
+    return ", ".join(f"{label} {weight:.0%}" for label, weight in mixture.items())
+
+
 def _run_sweep(args: argparse.Namespace) -> int:
     """Train each hyperparameter trial and benchmark the resulting policies."""
 
@@ -734,6 +778,7 @@ def _run_training(args: argparse.Namespace) -> int:
             else DEFAULT_CURRICULUM
         )
         dynamics = DynamicsConfig(noisy_discovery=args.discovery == "noisy")
+        opponent = ContextualDefender() if args.adversarial else None
         defender = DefenderConfig.adaptive() if args.defender == "adaptive" else DefenderConfig()
         train_curriculum(
             [
@@ -745,6 +790,7 @@ def _run_training(args: argparse.Namespace) -> int:
                     defender,
                     cast(RewardStrategy, args.reward),
                     () if args.forget_previous_stages else stages[:index],
+                    opponent,
                 )
                 for index, stage in enumerate(stages)
             ],
@@ -755,7 +801,8 @@ def _run_training(args: argparse.Namespace) -> int:
         labels = ", ".join(stage.label for stage in stages)
         print(
             f"Trained {args.algorithm} curriculum ({labels}) under "
-            f"{args.defender}/{args.discovery} into {args.output_dir.resolve()}"
+            f"{'adversarial' if args.adversarial else args.defender}/{args.discovery} "
+            f"into {args.output_dir.resolve()}"
         )
         return 0
     if args.algorithm == "maskable-ppo":
@@ -832,6 +879,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_game(args)
     if args.command == "sweep":
         return _run_sweep(args)
+    if args.command == "equilibrium":
+        return _run_equilibrium(args)
     if args.command == "train":
         return _run_training(args)
 

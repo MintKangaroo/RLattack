@@ -870,3 +870,73 @@ def test_cli_training_conditions_reach_the_environment(
     )
 
     assert seen == {"noisy": True, "defender": True, "step_cost": -0.2}
+
+
+def test_cli_equilibrium_solves_the_policy_grid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "equilibrium.json"
+
+    assert (
+        cli.main(
+            [
+                "equilibrium",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--episodes",
+                "2",
+                "--deterministic",
+                "--iterations",
+                "500",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    solved = json.loads(output.read_text(encoding="utf-8"))
+
+    assert "attacker x defender equilibrium" in printed
+    assert "value     :" in printed
+    assert len(solved["payoffs"]) == 4
+    assert len(solved["payoffs"][0]) == 5
+    assert sum(solved["attacker_mixture"]) == pytest.approx(1.0)
+
+
+def test_cli_adversarial_training_attaches_a_learning_defender(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    policies: list[object] = []
+
+    def record(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        for builder in builders:
+            policies.append(cast(Callable[[], StageEnv], builder)().defender_policy)
+
+    monkeypatch.setattr(cli, "train_curriculum", record)
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--adversarial",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "adv"),
+            ]
+        )
+        == 0
+    )
+
+    assert all(policy is policies[0] for policy in policies), (
+        "one defender must learn across every stage, not one per stage"
+    )
+    assert policies[0] is not None
+    assert "adversarial/exact" in capsys.readouterr().out

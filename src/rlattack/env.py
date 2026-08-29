@@ -116,6 +116,12 @@ class DynamicsConfig:
     because reaching its objective takes more steps - which shows up in a transfer
     table as a generalization failure that is really a calibration artifact.
 
+    The agent observes ``probed_hosts``: which hosts it has probed and missed since its
+    last new vantage point. That is its own memory of its own actions, not privileged
+    knowledge, and without it a policy cannot tell "I have probed everything once" from
+    "I have not probed at all" - the distinction lives only in the action mask, which a
+    maskable learner uses to filter its action distribution rather than as an input.
+
     ``noisy_discovery`` turns neighbour discovery into a scan. With exact adjacency the
     action mask itself reveals the topology: it offers ``discover_host`` for precisely
     the hosts that are genuinely adjacent, so the agent reads the graph instead of
@@ -332,6 +338,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "acquired_credentials": spaces.MultiBinary(self._credential_width),
             "acquired_privileges": spaces.MultiBinary(self._privilege_width),
             "collected_objectives": spaces.MultiBinary(self._objective_width),
+            "probed_hosts": spaces.MultiBinary(self._host_width),
             "alert_level": spaces.MultiBinary(config.alert_levels),
             "budget_fraction": spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
         }
@@ -370,6 +377,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._defender_actions = 0
         self._revoked_credentials = 0
         self._defender_false_positives = 0
+        self._defender_over_budget = 0
         self._last_defender_response = DefenderResponse()
         self._pending_response: tuple[DefenderResponse, int, bool] | None = None
         self._defender_rng = np.random.default_rng(_DEFENDER_STREAM)
@@ -397,6 +405,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "defender_action": "none",
             "defender_actions": 0,
             "defender_false_positives": 0,
+            "defender_over_budget": 0,
+            "defender_budget_remaining": self._budget_remaining(),
             "defender_pending": False,
             "revoked_credentials": 0,
             "objective_captured": False,
@@ -488,6 +498,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "defender_action": self._last_defender_response.name,
             "defender_actions": self._defender_actions,
             "defender_false_positives": self._defender_false_positives,
+            "defender_over_budget": self._defender_over_budget,
+            "defender_budget_remaining": self._budget_remaining(),
             "defender_pending": self._pending_response is not None,
             "revoked_credentials": self._revoked_credentials,
             "detected": self._detected,
@@ -797,6 +809,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             alert_band=max(0, band),
             has_credentials=bool(credentials),
             phase=min(2, int(self._steps / self.step_budget * 3)),
+            budget_pressure=self._budget_pressure(),
         )
         action = policy.action_for(context)
         if action == "harden":
@@ -817,6 +830,11 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         if self._steps < due_step:
             return False
         self._pending_response = None
+        budget = self.defender.response_budget
+        if budget is not None and self._defender_actions >= budget:
+            # The response was decided but the team has no capacity left to run it.
+            self._defender_over_budget += 1
+            return True
         self._last_defender_response = response
         self._last_response_step = self._steps
         self._defender_actions += 1
@@ -829,6 +847,22 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         if response.revoke_credential is not None:
             self._revoke_credential(response.revoke_credential)
         return True
+
+    def _budget_remaining(self) -> int | None:
+        """Return the responses the defender can still afford this episode."""
+
+        budget = self.defender.response_budget
+        if budget is None:
+            return None
+        return max(0, budget - self._defender_actions)
+
+    def _budget_pressure(self) -> int:
+        """Quantize how much of the response budget is spent, for the defender policy."""
+
+        budget = self.defender.response_budget
+        if budget is None:
+            return 0
+        return min(2, int(self._defender_actions / budget * 3))
 
     def _observed_risk(self) -> float:
         """Return the defender's noisy estimate of the attacker's detection risk."""
@@ -895,6 +929,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "acquired_credentials": self._acquired_credentials.copy(),
             "acquired_privileges": self._acquired_privileges.copy(),
             "collected_objectives": self._collected_objectives.copy(),
+            "probed_hosts": self._failed_discovery.copy(),
             "alert_level": alert,
             "budget_fraction": np.array(
                 [(self.step_budget - self._steps) / self.step_budget], dtype=np.float32

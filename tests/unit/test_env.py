@@ -1,8 +1,10 @@
+from typing import cast
+
 import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
 
-from rlattack.defender import DefenderConfig
+from rlattack.defender import ContextualDefender, DefenderConfig
 from rlattack.env import (
     ACTION_NAMES,
     Action,
@@ -640,3 +642,135 @@ def test_enabling_the_defender_does_not_shift_the_attacker_stream() -> None:
     )
 
     assert outcomes(DefenderConfig()) == outcomes(inert)
+
+
+def test_the_agent_remembers_which_hosts_it_probed_and_missed() -> None:
+    """Probe state must be in the observation, not only in the action mask.
+
+    A maskable learner uses the mask to filter its action distribution, not as a network
+    input, so without this channel a policy cannot tell an exhausted sweep from an
+    untouched one.
+    """
+
+    base = make_scenario()
+    scenario = base.model_copy(update={"hosts": (*base.hosts, Host(id="isolated"))})
+    env = AttackPathEnv(scenario, dynamics=DynamicsConfig(stochastic=False, noisy_discovery=True))
+    observation, _ = env.reset(seed=1)
+
+    assert observation["probed_hosts"].tolist() == [0, 0, 0]
+
+    observation, _, _, _, _ = env.step(env.encode_action(Action.DISCOVER_HOST, 2))
+
+    assert observation["probed_hosts"].tolist() == [0, 0, 1]
+
+    observation, _, _, _, _ = env.step(env.encode_action(Action.DISCOVER_HOST, 1))
+
+    assert observation["probed_hosts"].tolist() == [0, 0, 0], (
+        "a successful discovery re-opens the sweep, and the memory must follow"
+    )
+
+
+def test_probe_memory_is_present_under_exact_discovery_too() -> None:
+    """The channel is unconditional so one policy fits both discovery conditions."""
+
+    env = deterministic_env()
+    observation, _ = env.reset(seed=1)
+
+    assert observation["probed_hosts"].tolist() == [0, 0]
+    assert env.observation_space.contains(observation)
+
+
+def test_a_response_budget_caps_what_the_defender_can_spend() -> None:
+    def responses(budget: int | None) -> tuple[int, int]:
+        env = AttackPathEnv(
+            generate_scenario("medium", "hard", 3),
+            step_budget=60,
+            defender=DefenderConfig(
+                enabled=True,
+                alert_threshold=0.0,
+                response_cooldown=1,
+                response_latency=0,
+                observation_noise=0.0,
+                response_budget=budget,
+            ),
+        )
+        env.reset(seed=3)
+        info: dict[str, object] = {}
+        terminated = truncated = False
+        while not terminated and not truncated:
+            mask = env.action_mask()
+            action = np.int64(int(np.flatnonzero(mask)[0]))
+            _, _, terminated, truncated, info = env.step(action)
+        return int(cast(int, info["defender_actions"])), int(
+            cast(int, info["defender_over_budget"])
+        )
+
+    unlimited, unlimited_dropped = responses(None)
+    capped, dropped = responses(3)
+
+    assert unlimited > 3
+    assert unlimited_dropped == 0
+    assert capped == 3
+    assert dropped > 0, "decisions past the budget must be recorded, not silently lost"
+
+
+def test_budget_remaining_is_reported_and_validated() -> None:
+    env = AttackPathEnv(make_scenario(), defender=DefenderConfig(response_budget=4))
+    _, info = env.reset(seed=1)
+
+    assert info["defender_budget_remaining"] == 4
+
+    unlimited = AttackPathEnv(make_scenario())
+    _, info = unlimited.reset(seed=1)
+
+    assert info["defender_budget_remaining"] is None
+
+    with pytest.raises(ValueError, match="response_budget"):
+        DefenderConfig(response_budget=0)
+
+
+def test_budget_pressure_rises_as_the_defender_spends() -> None:
+    """The learned defender reads this band, so it must track real spending."""
+
+    env = AttackPathEnv(
+        generate_scenario("medium", "hard", 3),
+        step_budget=60,
+        dynamics=DynamicsConfig.deterministic(),
+        defender=DefenderConfig(
+            enabled=True,
+            alert_threshold=0.0,
+            response_cooldown=1,
+            response_latency=0,
+            observation_noise=0.0,
+            response_budget=2,
+        ),
+    )
+    env.reset(seed=3)
+
+    assert env._budget_pressure() == 0
+
+    pressures = []
+    terminated = truncated = False
+    while not terminated and not truncated:
+        mask = env.action_mask()
+        _, _, terminated, truncated, _ = env.step(np.int64(int(np.flatnonzero(mask)[0])))
+        pressures.append(env._budget_pressure())
+
+    assert max(pressures) == 2, "a spent budget must read as maximum pressure"
+    assert env._budget_remaining() == 0
+
+
+def test_the_contextual_defender_reads_budget_pressure() -> None:
+    env = AttackPathEnv(
+        make_scenario(),
+        dynamics=DynamicsConfig.deterministic(),
+        defender_policy=ContextualDefender(
+            config=DefenderConfig(enabled=True, alert_threshold=0.0, response_budget=2),
+            exploration=0.0,
+        ),
+    )
+    env.reset(seed=1)
+    env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+
+    assert env.defender_policy is not None
+    assert env.defender.response_budget == 2

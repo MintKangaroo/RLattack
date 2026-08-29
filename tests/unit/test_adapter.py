@@ -2,7 +2,11 @@ import json
 
 import pytest
 
-from rlattack.adapter import export_sanitized_scenario, import_sanitized_threatgraph
+from rlattack.adapter import (
+    assert_sanitized,
+    export_sanitized_scenario,
+    import_sanitized_threatgraph,
+)
 from rlattack.generator import generate_scenario
 from rlattack.scenario import Host, Scenario
 
@@ -120,3 +124,12 @@ def test_adapter_rejects_ambiguous_refs_and_unsafe_export_values() -> None:
     )
     with pytest.raises(ValueError, match="live target"):
         export_sanitized_scenario(unsafe)
+
+
+def test_the_simulators_own_two_label_hostnames_stay_acceptable() -> None:
+    """Tightening the pattern must not reject `host-00.sim`."""
+
+    assert_sanitized({"hostname_like": "host-00.sim", "id": "generated-small-easy-5"})
+
+    with pytest.raises(ValueError, match="live target identifier"):
+        assert_sanitized({"note": "reachable from webserver.corp.example"})
