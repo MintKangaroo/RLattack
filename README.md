@@ -148,6 +148,9 @@ rlattack scenario \
 | `rlattack benchmark` | 다중 seed generalization benchmark와 paired 유의성 검정 |
 | `rlattack ablation` | reward strategy ablation과 유의성 검정 |
 | `rlattack transfer` | 9개 scenario class 전체에 대한 전이 평가 |
+| `rlattack conditions` | defender × discovery 조건 격자에서의 평가 |
+| `rlattack game` | 에피소드 간 학습하는 defender와의 대전 |
+| `rlattack sweep` | hyperparameter trial 학습과 비교 |
 | `rlattack train` | optional DQN/PPO policy 학습 (`.[training]` 필요) |
 | `rlattack scenario` | 검증된 scenario를 JSON으로 내보내기 |
 | `rlattack dashboard` | loopback 전용 interactive dashboard와 API 실행 |
@@ -362,10 +365,14 @@ rlattack transfer --policy artifacts/policies/final.zip --report artifacts/trans
 ```
 
 공개된 결과와 재현 명령은 [Published results](docs/results.md)에 있습니다. 요약하면,
-100k step curriculum으로 학습한 MaskablePPO는 `medium/hard`에서 graph oracle과 동일한
-성공률·탐지율(96.9% / 3.1%)을 내면서 보상은 유의하게 높습니다
-(+1.04, 95% CI [+0.11, +1.83], p=0.030). 더 짧은 경로가 아니라 **더 조용한 경로**를
+400k step curriculum으로 학습한 MaskablePPO는 `medium/hard`에서 graph oracle과 동일한
+성공률(96.9%)을 내면서 보상은 유의하게 높고(+2.71, 95% CI [+1.46, +4.59], p=0.0005)
+**한 번도 탐지되지 않습니다**(0.0% vs 3.1%). 더 짧은 경로가 아니라 **더 조용한 경로**를
 찾기 때문입니다.
+
+다만 이 정책은 학습한 조건에서만 유효합니다 — adaptive defender에는 영향을 받지 않지만
+noisy discovery에서는 성공률 **0%**입니다. Exact adjacency로 학습해 probe하는 법을
+배우지 못했기 때문입니다.
 
 > **Action masking이 필수입니다.** 각 상태에서 유효한 action은 전체의 1~2%뿐이라
 > (예: 288개 중 4개), masking 없이 학습하면 탐색 예산이 invalid action에 소모되고
@@ -396,7 +403,7 @@ make audit
 
 - Ruff lint + format
 - strict mypy
-- 159 tests (unit + reproducibility/solvability integration tests)
+- 204 tests (unit + reproducibility/solvability integration tests)
 - package statement coverage 100%
 - Gymnasium environment checker
 - FastAPI dashboard route와 loopback bind test
@@ -444,10 +451,13 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 - [x] Adaptive defender (monitoring hardening, credential revocation)
 - [x] Multi-objective episodes and paired significance testing
 - [x] Scenario curriculum and transfer evaluation across all nine classes
+- [x] Action-masked training, and published 100k/400k curriculum policies
+- [x] Condition-grid robustness evaluation and a learning (bandit) defender
+- [x] Hyperparameter sweep infrastructure
 
 현재 `v0.4.0`은 연구용 end-to-end workflow를 제공합니다. 실제 환경의 다양성을 합성 graph가
 완전히 대표하지 않으며, explainability output은 인과적 설명이나 보안 보장을 의미하지 않습니다.
-다음 확장 후보(curriculum policy 학습·공개, defender 반응 지연 모델링)는
+다음 확장 후보(noisy discovery 조건에서의 학습, 두 학습자 게임, 외부 attack-graph 데이터셋)는
 [Roadmap](docs/roadmap.md)에서 관리합니다. 변경 이력은 [CHANGELOG](CHANGELOG.md)를 참고하세요.
 
 ## 문서

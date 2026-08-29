@@ -11,11 +11,12 @@ training command below.
 ```bash
 python -m pip install -e ".[dev,training]"
 rlattack train --algorithm maskable-ppo --curriculum --seed 42 \
-  --output-dir artifacts/policies/mppo
+  --curriculum-timesteps 400000 --output-dir artifacts/policies/mppo-400k
 ```
 
-The curriculum is `small/easy → small/hard → medium/medium → medium/hard`, 100k
-timesteps total, carried as one policy with `set_env` and `reset_num_timesteps=False`.
+The curriculum is `small/easy → small/hard → medium/medium → medium/hard`, carried as
+one policy with `set_env` and `reset_num_timesteps=False`. Two budgets are reported
+below, 100k and 400k, because the shorter one is a floor rather than a result.
 
 ## Why action masking is not optional
 
@@ -85,7 +86,8 @@ transfer table would report as a generalization failure.
 | Greedy | 37.5% | 62.5% | 49.66 ± 6.86 | -6.82 | [-11.52, -2.13] |
 | Rule-based | 9.4% | 90.6% | 51.50 ± 6.60 | -17.66 | [-21.09, -14.24] |
 | Graph oracle | 96.9% | 3.1% | 27.34 ± 4.27 | 24.11 | [20.27, 27.96] |
-| **MaskablePPO** | **96.9%** | **3.1%** | 31.72 ± 3.27 | **25.15** | [20.89, 29.42] |
+| MaskablePPO (100k) | 96.9% | 3.1% | 31.72 ± 3.27 | 25.15 | [20.89, 29.42] |
+| **MaskablePPO (400k)** | **96.9%** | **0.0%** | 30.31 ± 4.73 | **26.82** | [23.96, 29.69] |
 
 Paired sign-flip permutation test against the graph oracle, on episode reward:
 
@@ -94,48 +96,83 @@ Paired sign-flip permutation test against the graph oracle, on episode reward:
 | Random | -25.83 | [-29.58, -21.90] | 0.0005 |
 | Greedy | -30.94 | [-34.48, -26.98] | 0.0005 |
 | Rule-based | -41.78 | [-45.81, -36.54] | 0.0005 |
-| MaskablePPO | **+1.04** | [+0.11, +1.83] | **0.0300** |
+| MaskablePPO (100k) | +1.04 | [+0.11, +1.83] | 0.0300 |
+| MaskablePPO (400k) | **+2.71** | [+1.46, +4.59] | **0.0005** |
 
-The learned policy matches the oracle's success and detection rates and earns
-significantly more reward, while taking *more* steps. It is not finding shorter paths -
-it is finding quieter ones, which the `risk-aware` reward pays for. The oracle remains
-the shortest-path upper bound.
+The learned policy matches the oracle's success rate and earns significantly more
+reward, while taking *more* steps. It is not finding shorter paths - it is finding
+quieter ones, which the `risk-aware` reward pays for. At 400k it is never detected at
+all. The oracle remains the shortest-path upper bound.
+
+Quadrupling the budget roughly triples the margin over the oracle and takes detection
+from 3.1% to 0%, which is the concrete reason the 100k figures should be read as a
+floor.
 
 ## Trained policy transfer
 
-MaskablePPO, 24 shared seeds, control condition. The curriculum trained on
+MaskablePPO (400k), 24 shared seeds, control condition. The curriculum trained on
 `small/easy → small/hard → medium/medium → medium/hard`; the three `large` rows are
 **held out** - the policy never saw that class.
 
 | Scenario class | Success | Detected | Steps | Reward | Oracle success |
 | --- | --- | --- | --- | --- | --- |
-| small/easy | 95.8% | 4.2% | 18.67 ± 3.31 | 16.08 | 100.0% |
-| small/medium | 100.0% | 0.0% | 16.96 ± 3.74 | 16.19 | 100.0% |
-| small/hard | 100.0% | 0.0% | 16.46 ± 4.22 | 25.35 | 100.0% |
-| medium/easy | 87.5% | 12.5% | 39.54 ± 3.80 | 9.86 | 87.5% |
-| medium/medium | 91.7% | 8.3% | 33.75 ± 5.83 | 11.40 | 91.7% |
-| medium/hard | 95.8% | 4.2% | 31.75 ± 3.29 | 24.39 | 91.7% |
-| large/easy *(held out)* | 58.3% | 41.7% | 102.04 ± 7.20 | -16.52 | 83.3% |
-| large/medium *(held out)* | 79.2% | 20.8% | 91.17 ± 6.25 | -8.44 | 91.7% |
-| large/hard *(held out)* | 83.3% | 16.7% | 88.21 ± 6.69 | 5.45 | 100.0% |
+| small/easy | 95.8% | 0.0% | 17.96 ± 2.84 | 17.60 | 100.0% |
+| small/medium | 95.8% | 0.0% | 16.08 ± 3.59 | 17.05 | 100.0% |
+| small/hard | 95.8% | 0.0% | 15.79 ± 3.53 | 26.11 | 100.0% |
+| medium/easy | 87.5% | 8.3% | 38.83 ± 6.81 | 11.39 | 87.5% |
+| medium/medium | 91.7% | 4.2% | 32.79 ± 7.54 | 13.08 | 91.7% |
+| medium/hard | 95.8% | 0.0% | 30.12 ± 5.09 | 26.42 | 91.7% |
+| large/easy *(held out)* | 66.7% | 33.3% | 99.88 ± 6.55 | -9.49 | 83.3% |
+| large/medium *(held out)* | 70.8% | 29.2% | 88.96 ± 6.79 | -6.18 | 91.7% |
+| large/hard *(held out)* | 83.3% | 16.7% | 82.54 ± 6.01 | 11.28 | 100.0% |
 
-The policy holds up on the classes it trained on and degrades on the held-out `large`
-ones, where it trails the oracle by 17-25 points. That gap is the honest measure of how
-far a 100k-step curriculum generalizes; it is not evidence that the class is unwinnable,
-since the oracle scores 83-100% there.
+The policy matches the oracle on the classes it trained on and degrades on the held-out
+`large` ones, where it trails by 17-21 points. That gap is the honest measure of how far
+the curriculum generalizes; it is not evidence that the class is unwinnable, since the
+oracle scores 83-100% there.
+
+## Robustness to the experimental conditions
+
+`medium/hard`, 32 shared seeds, paired against the control condition.
+
+| Condition | Oracle success | MaskablePPO (100k) | MaskablePPO (400k) |
+| --- | --- | --- | --- |
+| passive / exact *(control)* | 96.9% | 96.9% | 96.9% |
+| adaptive / exact | 96.9% | 93.8% (p = 0.23) | 96.9% (p = 0.29) |
+| passive / noisy | 68.8% | **0.0%** | **0.0%** |
+| adaptive / noisy | 46.9% | **0.0%** | **0.0%** |
+
+The adaptive defender is not what beats the learned policy - neither budget loses
+significantly to it. Noisy discovery is. Both policies trained under exact adjacency,
+where the action mask itself reveals which hosts are reachable, so they never learned to
+probe; when the observation model shifts they cannot act at all. The 400k policy at
+least recognizes the situation and stops after 9.5 steps instead of sweeping itself into
+detection.
+
+The graph oracle degrades gracefully over the same grid because it carries privileged
+route knowledge that no observation model can take away. That is a property of the
+baseline, not an achievement of it.
+
+This is the sharpest limitation in this document: **the published policies are only
+valid under the conditions they trained on.**
 
 ## Reproducing
 
 ```bash
 # transfer table
-rlattack transfer --policy artifacts/policies/mppo/final.zip \
+rlattack transfer --policy artifacts/policies/mppo-400k/final.zip \
   --policy-algorithm maskable-ppo --episodes 24 --resamples 1000 \
   --output artifacts/transfer.jsonl --report artifacts/transfer.html
+
+# robustness to the experimental conditions
+rlattack conditions --size medium --difficulty hard --episodes 32 \
+  --observation curriculum --resamples 1000 \
+  --policy artifacts/policies/mppo-400k/final.zip --output artifacts/conditions.jsonl
 
 # head-to-head against the baselines
 rlattack benchmark --size medium --difficulty hard --episodes 32 \
   --observation curriculum --resamples 2000 --compare-to shortest-path \
-  --policy artifacts/policies/mppo/final.zip --policy-algorithm maskable-ppo \
+  --policy artifacts/policies/mppo-400k/final.zip --policy-algorithm maskable-ppo \
   --output artifacts/benchmark.jsonl
 ```
 
@@ -147,9 +184,11 @@ rlattack benchmark --size medium --difficulty hard --episodes 32 \
 
 ## Limitations
 
-- 100k timesteps is a floor, not a ceiling; no hyperparameter search was run.
-- Published policies are evaluated under the **control** condition (passive defender,
-  exact discovery). Evaluating them under the adaptive defender and noisy discovery
-  conditions is roadmap item 40.
+- 400k timesteps is still small. The 100k-to-400k jump improved every headline number,
+  so the curve had not flattened when these runs stopped.
+- Published policies collapse under noisy discovery (see above). Training under that
+  condition is left open.
+- No hyperparameter search was run for the published policies; `rlattack sweep` exists
+  for it, but the reported runs use the defaults.
 - The step budget scales with scenario size, so `steps` is comparable within a class but
   not across classes.

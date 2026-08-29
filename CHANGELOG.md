@@ -3,6 +3,43 @@
 All notable changes to RLAttack are recorded here. The project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-29
+
+### Added
+
+- **`rlattack conditions`** evaluates one agent across the defender x discovery grid on
+  a shared seed list. Published policies had only ever been reported under the control
+  condition. The result matters: the curriculum policy is unaffected by the adaptive
+  defender (p = 0.29) but scores **0%** under noisy discovery at both training budgets,
+  because it trained under exact adjacency and never learned to probe. The graph oracle
+  degrades gracefully over the same grid (96.9% -> 68.8% -> 46.9%) because its route
+  knowledge is privileged and no observation model can take it away.
+- **`rlattack game`** plays a fixed attacker against `BanditDefender`, which picks a
+  response policy per episode and updates it from the outcome - a deliberately simple
+  two-player setup. Against the graph oracle over 200 rounds it concentrates on one arm
+  and holds the attacker to 92.0%, against 96.5% for the weakest fixed arm; it does not
+  beat the best fixed arm chosen with hindsight (91.5%), which is the exploration it
+  pays to find the arm unaided.
+- **`rlattack sweep`** trains a grid of hyperparameter trials and benchmarks each
+  resulting policy against a baseline trial. `PPOTrainingConfig` gains `learning_rate`
+  and `entropy_coefficient`, and `--curriculum-timesteps` sets the budget.
+- A **400k-timestep** curriculum policy alongside the 100k one. It widens the margin
+  over the graph oracle from +1.04 (p = 0.030) to +2.71 (p = 0.0005) and takes
+  detection from 3.1% to 0%, which is why the 100k figures are a floor.
+
+### Changed
+
+- Screenshots re-captured against the current UI; they had shown the v0.2 layout.
+
+### Fixed
+
+- **Two responsive defects the screenshots exposed.** The benchmark rows wrapped into
+  three cramped lines on a phone once reward confidence intervals were added; they now
+  stack, with the interval hidden below 720px. A `white-space:nowrap` tag in a
+  non-wrapping panel head pushed the page 41px past a 320px viewport. Verified at
+  320/375/414/768/1024/1440/1920 with zero horizontal overflow, and pinned by a unit
+  test since CI has no browser.
+
 ## [0.5.0] - 2026-08-29
 
 ### Added

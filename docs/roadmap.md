@@ -66,14 +66,27 @@
 37. Train against the environment's action mask, without which only 1-2% of the action
     space is valid and learning collapses onto stopping immediately. (completed)
 
+## v0.6 - closing the measurement loop
+
+38. Make the training budget and hyperparameters explicit and searchable, and publish a
+    longer run. (completed)
+39. Re-capture the dashboard and transfer screenshots against the current UI.
+    (completed)
+40. Evaluate learned policies across the condition grid, not only the control.
+    (completed)
+41. A defender that adapts its own policy, turning the setup into a two-player game.
+    (completed)
+
 ## Next
 
-38. Longer training budgets and a hyperparameter sweep; the published policies are
-    100k-step curriculum runs, which is a floor rather than a ceiling.
-39. Re-capture the dashboard and transfer screenshots in an environment with a browser.
-40. Evaluate learned policies under the adaptive defender and noisy discovery
-    conditions, not only the control condition.
-41. A defender that adapts its own policy, turning the setup into a two-player game.
+42. Train under noisy discovery. The published policies collapse there because the
+    action mask revealed the topology during training and they never learned to probe.
+43. Let the attacker adapt between episodes too, so the game has two learners rather
+    than a learning defender and a frozen attacker.
+44. Replace the bandit defender with a policy conditioned on the episode so far, rather
+    than one arm per episode.
+45. A scenario importer for published attack-graph datasets, so results are not confined
+    to this generator's structure.
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.
