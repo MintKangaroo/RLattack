@@ -77,16 +77,31 @@
 41. A defender that adapts its own policy, turning the setup into a two-player game.
     (completed)
 
+## v0.7 - two learners and external graphs
+
+42. Train under the conditions a policy will be evaluated in, and publish a policy
+    trained under noisy discovery. (completed; the policy improves reward and avoids
+    detection under that condition but still scores 0% success - see item 50)
+43. Let the attacker adapt between episodes, so the game has two learners. (completed)
+44. Condition the defender's policy on the episode so far instead of committing to one
+    configuration per episode, and charge for responding. (completed)
+45. Import published attack graphs as sanitized scenarios. (completed)
+
 ## Next
 
-42. Train under noisy discovery. The published policies collapse there because the
-    action mask revealed the topology during training and they never learned to probe.
-43. Let the attacker adapt between episodes too, so the game has two learners rather
-    than a learning defender and a frozen attacker.
-44. Replace the bandit defender with a policy conditioned on the episode so far, rather
-    than one arm per episode.
-45. A scenario importer for published attack-graph datasets, so results are not confined
-    to this generator's structure.
+46. A published-dataset mapping guide: which fields of common attack-graph exports map
+    onto the import contract, with a worked example per format.
+47. Train the attacker with RL inside the game loop rather than selecting among fixed
+    baselines, so both learners are policies rather than one being a bandit.
+48. Report Nash-style equilibria over the attacker x defender policy grid instead of
+    one-sided sweeps.
+49. Cost-model the defender's responses against a budget, so suppression trades off
+    against operational load rather than a flat per-response penalty.
+50. Close the exploration gap under noisy discovery. The trained policy banks the
+    shaped reward on the entry host and stops rather than persisting through probe
+    failures; the oracle reaches 68.8% on the same condition, so the ceiling is the
+    learner, not the environment. Candidates: an intrinsic exploration bonus, a probe
+    budget the policy can observe, or much longer training.
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

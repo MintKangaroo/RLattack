@@ -2,7 +2,7 @@ import rlattack
 
 
 def test_package_version() -> None:
-    assert rlattack.__version__ == "0.6.0"
+    assert rlattack.__version__ == "0.7.0"
 
 
 def test_package_documents_simulation_scope() -> None:

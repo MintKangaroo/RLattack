@@ -89,6 +89,11 @@ OS command, subprocess, socket, external SDK를 import하지 않습니다.
 `rlattack.stats`는 seed로 pairing된 episode에 대해 sign-flip permutation test와 percentile
 bootstrap을 수행합니다. 정규성 가정과 SciPy 의존이 없습니다.
 
+`rlattack.conditions`는 defender × discovery 조건 격자를 공유 seed로 평가합니다.
+`rlattack.game`은 학습하는 공격자와 방어자의 2인 게임 루프이고, 양쪽 모두
+`rlattack.bandit`의 epsilon-greedy 코어를 공유해 보고되는 행동이 서로 비교 가능합니다.
+`rlattack.importers`는 외부 attack graph를 익명화해 scenario로 변환합니다.
+
 `rlattack.curriculum`은 scenario stage와 전이 평가를 제공합니다. `StageEnv`는 reset마다
 stage에서 새 scenario를 뽑습니다. Stable-Baselines3는 environment를 한 번만 만들기 때문에,
 그렇게 하지 않으면 stage가 class가 아니라 하나의 graph를 가르치게 됩니다.

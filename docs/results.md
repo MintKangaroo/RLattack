@@ -12,6 +12,11 @@ training command below.
 python -m pip install -e ".[dev,training]"
 rlattack train --algorithm maskable-ppo --curriculum --seed 42 \
   --curriculum-timesteps 400000 --output-dir artifacts/policies/mppo-400k
+
+# the same budget under the noisy-discovery condition
+rlattack train --algorithm maskable-ppo --curriculum --seed 42 \
+  --curriculum-timesteps 400000 --discovery noisy \
+  --output-dir artifacts/policies/mppo-noisy
 ```
 
 The curriculum is `small/easy → small/hard → medium/medium → medium/hard`, carried as
@@ -131,6 +136,33 @@ The policy matches the oracle on the classes it trained on and degrades on the h
 the curriculum generalizes; it is not evidence that the class is unwinnable, since the
 oracle scores 83-100% there.
 
+## Training under noisy discovery
+
+Roadmap item 42 asked whether the collapse under noisy discovery is fixed by training
+under it. **It is not.** A 400k MaskablePPO curriculum trained with
+`--discovery noisy`, evaluated on `medium/hard` over 32 seeds at a matched step budget:
+
+| Policy | Condition | Success | Detected | Steps | Reward |
+| --- | --- | --- | --- | --- | --- |
+| Graph oracle | passive/noisy | **68.8%** | 31.2% | 33.5 ± 7.4 | 7.37 |
+| MaskablePPO (exact-trained) | passive/noisy | 0.0% | 3.1% | 9.6 ± 2.2 | -4.18 |
+| MaskablePPO (noisy-trained) | passive/noisy | 0.0% | 0.0% | 19.0 ± 4.0 | **7.45** |
+| MaskablePPO (noisy-trained) | passive/exact | 0.0% | 0.0% | 21.1 ± 2.6 | 14.65 |
+
+Training under the condition triples the reward there (-4.18 to 7.45) and removes
+detection entirely, but success stays at zero. A trace explains why: the policy learns
+the local exploitation chain correctly - scan, enumerate, validate, retry a failed
+access, escalate - then probes for neighbours, misses seven times, and **stops**. It
+learned to bank the shaped reward and quit rather than persist through probe failures.
+
+The condition is not unwinnable: the oracle scores 68.8% on it. This is an exploration
+gap, not an environment defect, and 400k steps did not close it - the training reward
+plateaued around 12-15 rather than climbing as the exact-condition run did.
+
+A policy trained under noisy discovery also stops succeeding under *exact* adjacency
+(0.0%), so this is not a strictly better policy; it is one adapted to a harder
+observation model at the cost of the easier one.
+
 ## Robustness to the experimental conditions
 
 `medium/hard`, 32 shared seeds, paired against the control condition.
@@ -186,8 +218,9 @@ rlattack benchmark --size medium --difficulty hard --episodes 32 \
 
 - 400k timesteps is still small. The 100k-to-400k jump improved every headline number,
   so the curve had not flattened when these runs stopped.
-- Published policies collapse under noisy discovery (see above). Training under that
-  condition is left open.
+- Published policies score 0% under noisy discovery, and training under that condition
+  does not fix it (see above). The oracle reaches 68.8% there, so the gap is
+  exploration, not the environment.
 - No hyperparameter search was run for the published policies; `rlattack sweep` exists
   for it, but the reported runs use the defaults.
 - The step budget scales with scenario size, so `steps` is comparable within a class but

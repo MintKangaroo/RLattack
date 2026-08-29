@@ -143,3 +143,24 @@ def test_curriculum_scaling_inputs_are_validated() -> None:
         scale_curriculum((), 1000)
     with pytest.raises(ValueError, match="at least one step per stage"):
         scale_curriculum(DEFAULT_CURRICULUM, 2)
+
+
+def test_a_stage_can_sample_earlier_stages_alongside_its_own() -> None:
+    """Training a stage in isolation makes the policy forget the earlier ones."""
+
+    stage = CurriculumStage("medium", "hard")
+    earlier = CurriculumStage("small", "easy")
+    env = StageEnv(
+        stage,
+        (1, 2),
+        stage_env_factory(stage),
+        [stage_env_factory(earlier)],
+    )
+    sizes = set()
+    for seed in range(20):
+        env.reset(seed=seed)
+        sizes.add(len(env.current.scenario.hosts))
+
+    assert len(sizes) > 1, "a mixed stage must draw from more than its own class"
+    assert env.pool_size == 4
+    assert env.observation_space == stage_env_factory(earlier)(1).observation_space

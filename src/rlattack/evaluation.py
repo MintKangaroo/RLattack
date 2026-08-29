@@ -26,6 +26,8 @@ class EpisodeOutcome:
     reward: float
     detection_risk: float
     path_cost: float
+    defender_actions: int = 0
+    defender_false_positives: int = 0
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,8 @@ def run_episode_outcome(
         reward=total_reward,
         detection_risk=cast(float, info["detection_risk"]),
         path_cost=cast(float, info["path_cost"]),
+        defender_actions=cast(int, info["defender_actions"]),
+        defender_false_positives=cast(int, info["defender_false_positives"]),
     )
 
 

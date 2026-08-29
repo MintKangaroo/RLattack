@@ -11,7 +11,14 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from rlattack.defender import DefenderConfig, DefenderResponse, DefenderState, decide_response
+from rlattack.defender import (
+    ContextualDefender,
+    DefenderConfig,
+    DefenderContext,
+    DefenderResponse,
+    DefenderState,
+    decide_response,
+)
 from rlattack.scenario import NetworkEdge, Scenario
 
 Observation = dict[str, np.ndarray[Any, Any]]
@@ -236,6 +243,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         dynamics: DynamicsConfig | None = None,
         observation_config: ObservationConfig | None = None,
         defender: DefenderConfig | None = None,
+        defender_policy: ContextualDefender | None = None,
     ) -> None:
         if step_budget < 1:
             raise ValueError("step_budget must be positive")
@@ -246,7 +254,10 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self.reward_config = reward_config or RewardConfig()
         self.dynamics = dynamics or DynamicsConfig()
         self.observation_config = observation_config or ObservationConfig()
-        self.defender = defender or DefenderConfig()
+        self.defender_policy = defender_policy
+        self.defender = defender or (
+            defender_policy.config if defender_policy is not None else DefenderConfig()
+        )
         self._risk_scale = (
             min(1.0, self.dynamics.risk_reference_hosts / len(scenario.hosts))
             if self.dynamics.normalize_risk_by_size
@@ -735,17 +746,19 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         if self._pending_response is not None:
             return
         observed_risk = self._observed_risk()
-        response = decide_response(
-            self.defender,
-            DefenderState(
-                observed_risk=observed_risk,
-                steps_since_response=self._steps - self._last_response_step,
-                acquired_credentials=tuple(
-                    int(index) for index in np.flatnonzero(self._acquired_credentials)
+        credentials = tuple(int(index) for index in np.flatnonzero(self._acquired_credentials))
+        if self.defender_policy is not None:
+            response = self._policy_response(self.defender_policy, observed_risk, credentials)
+        else:
+            response = decide_response(
+                self.defender,
+                DefenderState(
+                    observed_risk=observed_risk,
+                    steps_since_response=self._steps - self._last_response_step,
+                    acquired_credentials=credentials,
                 ),
-            ),
-            self._defender_rng,
-        )
+                self._defender_rng,
+            )
         if response.name == "none":
             return
         false_positive = self._detection_risk < self.defender.alert_threshold
@@ -772,6 +785,28 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         ]
         if undiscovered and all(self._failed_discovery[index] for index in undiscovered):
             self._failed_discovery[:] = 0
+
+    def _policy_response(
+        self, policy: ContextualDefender, observed_risk: float, credentials: tuple[int, ...]
+    ) -> DefenderResponse:
+        """Ask the learned defender policy what to do in the current context."""
+
+        bands = self.observation_config.alert_levels
+        band = min(bands - 1, int(observed_risk / self.dynamics.detection_threshold * bands))
+        context = DefenderContext(
+            alert_band=max(0, band),
+            has_credentials=bool(credentials),
+            phase=min(2, int(self._steps / self.step_budget * 3)),
+        )
+        action = policy.action_for(context)
+        if action == "harden":
+            return DefenderResponse(harden=True)
+        if action == "revoke" and credentials:
+            return DefenderResponse(
+                harden=True,
+                revoke_credential=int(self._defender_rng.choice(np.asarray(credentials))),
+            )
+        return DefenderResponse()
 
     def _land_pending_response(self) -> bool:
         """Apply a queued defender response once its latency has elapsed."""

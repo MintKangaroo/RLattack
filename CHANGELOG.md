@@ -3,6 +3,50 @@
 All notable changes to RLAttack are recorded here. The project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-29
+
+### Added
+
+- **`rlattack train --discovery/--defender`** so a policy can be trained under the
+  conditions it will be evaluated in. The v0.6 policies scored 0% under noisy discovery
+  purely because they had only ever trained under exact adjacency.
+- **`BanditAttacker`**, so both sides of `rlattack game` adapt between episodes rather
+  than one learner facing a stationary opponent. Against the contextual defender it
+  rediscovers shortest-path unaided (232 of 256 pulls), at a lower overall success rate
+  than a fixed oracle because it pays to find out which baseline that is.
+- **`ContextualDefender`**, a defender policy conditioned on the episode so far - alert
+  band, whether there is anything to revoke, and how far into the budget the episode is
+  - learned by Monte-Carlo over the episode's terminal reward. Over five seeds of 256
+  rounds it holds the graph oracle to 87.7% +/- 3.9% against the bandit's
+  92.7% +/- 1.0%, at four times the defender reward.
+- **`rlattack import`** converts published attack graphs (GraphML, GML, NetworkX
+  node-link JSON) into sanitized scenarios. Node identifiers are replaced with anonymous
+  IDs and the payload must pass the ThreatGraph sanitizer, so an import cannot carry a
+  hostname or address into a scenario file. `--topology-only` keeps just the structure;
+  by default a deterministic exploitation layer is synthesized so an imported topology
+  is playable.
+- `rlattack.bandit.EpsilonGreedy`, shared by the adaptive attacker and defender.
+
+### Fixed
+
+- **Training conditions never reached the environment.** `--discovery`, `--defender`,
+  and `--reward` were parsed and printed but not passed through, so a run advertised as
+  noisy trained under exact adjacency. A test now asserts the conditions arrive at the
+  environment rather than in the log line.
+
+### Changed
+
+- Curriculum stages sample every earlier stage by default
+  (`--forget-previous-stages` restores isolation), the standard guard against
+  catastrophic forgetting - Stable-Baselines3 carries its episode buffer across stages,
+  so a curriculum's rolling reward would not reveal the loss.
+- **Responding now costs the defender.** It was free, which made "respond on every step"
+  trivially optimal and the learning problem vacuous. `defender_reward` charges per
+  response and charges more for false positives, which the environment already counted.
+  `EpisodeOutcome` carries both counters so the cost is computed from measured
+  behaviour, and they are included in exports.
+- `adapter._assert_sanitized` is now the public `adapter.assert_sanitized`.
+
 ## [0.6.0] - 2026-08-29
 
 ### Added

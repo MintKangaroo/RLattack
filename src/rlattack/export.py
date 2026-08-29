@@ -22,6 +22,8 @@ EPISODE_FIELDS: tuple[str, ...] = (
     "reward",
     "detection_risk",
     "path_cost",
+    "defender_actions",
+    "defender_false_positives",
 )
 
 

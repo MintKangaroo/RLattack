@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
+import networkx as nx
 import numpy as np
 import pytest
 
@@ -593,6 +596,8 @@ def test_cli_game_reports_the_defenders_learned_preference(
                 "greedy",
                 "--rounds",
                 "10",
+                "--defender-policy",
+                "bandit",
                 "--output",
                 str(output),
             ]
@@ -665,3 +670,203 @@ def test_cli_sweep_trains_and_benchmarks_each_trial(
     assert "hyperparameter sweep" in printed
     assert "paired vs baseline" in printed
     assert {row["agent"] for row in rows} == {"baseline", "fast-lr"}
+
+
+def test_cli_game_supports_the_contextual_defender(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        cli.main(
+            [
+                "game",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--agent",
+                "greedy",
+                "--rounds",
+                "8",
+                "--output",
+                str(tmp_path / "game.jsonl"),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+
+    assert "defender policy  : contextual" in printed
+    assert "settled on" not in printed, "a contextual defender has no single arm"
+
+
+def test_cli_imports_a_published_attack_graph(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    graph: nx.DiGraph[Any] = nx.DiGraph()
+    graph.add_edges_from([("web", "app"), ("app", "db")])
+    source = tmp_path / "topology.graphml"
+    nx.write_graphml(graph, source)
+    output = tmp_path / "scenario.json"
+
+    assert cli.main(["import", "--input", str(source), "--output", str(output)]) == 0
+    imported = json.loads(output.read_text(encoding="utf-8"))
+    printed = capsys.readouterr().out
+
+    assert imported["id"] == "imported-topology"
+    assert len(imported["hosts"]) == 3
+    assert "app" not in output.read_text(encoding="utf-8").replace("host-", "")
+    assert "RLAttack scenario import" in printed
+
+
+def test_cli_can_import_topology_only(tmp_path: Path) -> None:
+    graph: nx.DiGraph[Any] = nx.DiGraph()
+    graph.add_edge("a", "b")
+    source = tmp_path / "t.graphml"
+    nx.write_graphml(graph, source)
+    output = tmp_path / "scenario.json"
+
+    assert (
+        cli.main(
+            [
+                "import",
+                "--input",
+                str(source),
+                "--output",
+                str(output),
+                "--topology-only",
+                "--scenario-id",
+                "custom-id",
+            ]
+        )
+        == 0
+    )
+    imported = json.loads(output.read_text(encoding="utf-8"))
+
+    assert imported["id"] == "custom-id"
+    assert imported["services"] == []
+
+
+def test_cli_game_can_let_the_attacker_learn_too(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        cli.main(
+            [
+                "game",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--attacker",
+                "bandit",
+                "--rounds",
+                "8",
+                "--output",
+                str(tmp_path / "game.jsonl"),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+
+    assert "attacker  : bandit over baselines" in printed
+    assert "attacker shortest-path" in printed
+
+
+def test_cli_curriculum_stages_mix_earlier_stages_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    stage_sizes: list[int] = []
+
+    def record(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        for builder in builders:
+            env = cast(Callable[[], StageEnv], builder)()
+            stage_sizes.append(env.pool_size)
+
+    monkeypatch.setattr(cli, "train_curriculum", record)
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "mixed"),
+            ]
+        )
+        == 0
+    )
+    mixed = stage_sizes[:]
+    stage_sizes.clear()
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--forget-previous-stages",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "isolated"),
+            ]
+        )
+        == 0
+    )
+
+    assert stage_sizes == [stage_sizes[0]] * len(stage_sizes), (
+        "isolated stages each draw from one class"
+    )
+    assert mixed == [stage_sizes[0] * (index + 1) for index in range(len(mixed))], (
+        "a mixed stage must also draw from every earlier stage"
+    )
+
+
+def test_cli_training_conditions_reach_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The flags must reach the env, not just the log line.
+
+    A refactor once left --discovery parsed and printed but never passed through, so a
+    run advertised as noisy trained under exact adjacency and its results were wrong.
+    """
+
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    seen: dict[str, object] = {}
+
+    def record(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        env = cast(Callable[[], StageEnv], builders[1])().current
+        seen["noisy"] = env.dynamics.noisy_discovery
+        seen["defender"] = env.defender.enabled
+        seen["step_cost"] = env.reward_config.step_cost
+
+    monkeypatch.setattr(cli, "train_curriculum", record)
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--discovery",
+                "noisy",
+                "--defender",
+                "adaptive",
+                "--reward",
+                "cost-aware",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "run"),
+            ]
+        )
+        == 0
+    )
+
+    assert seen == {"noisy": True, "defender": True, "step_cost": -0.2}

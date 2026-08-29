@@ -21,8 +21,8 @@ from rlattack.curriculum import (
     stage_env_factory,
 )
 from rlattack.dashboard import run_dashboard
-from rlattack.defender import BanditDefender
-from rlattack.env import AttackPathEnv, ObservationConfig
+from rlattack.defender import BanditDefender, ContextualDefender, DefenderConfig
+from rlattack.env import AttackPathEnv, DynamicsConfig, ObservationConfig
 from rlattack.evaluation import BenchmarkMetrics
 from rlattack.experiment import (
     REWARD_STRATEGIES,
@@ -38,8 +38,9 @@ from rlattack.experiment import (
     run_reward_ablation,
 )
 from rlattack.export import write_results
-from rlattack.game import play
+from rlattack.game import BanditAttacker, play
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
+from rlattack.importers import import_scenario_file
 from rlattack.policies import Algorithm, load_policy
 from rlattack.report import write_dashboard_report, write_transfer_report
 from rlattack.reward import RewardStrategy
@@ -169,6 +170,19 @@ def build_parser() -> argparse.ArgumentParser:
     scenario.add_argument("--seed", type=int, default=42)
     scenario.add_argument("--output", type=Path, default=Path("artifacts/scenario.json"))
 
+    importer = commands.add_parser(
+        "import",
+        help="convert a published attack graph into a sanitized scenario",
+    )
+    importer.add_argument("--input", type=Path, required=True, help="GraphML, GML, or JSON")
+    importer.add_argument("--output", type=Path, default=Path("artifacts/imported.json"))
+    importer.add_argument("--scenario-id", help="scenario ID (default: derived from the filename)")
+    importer.add_argument(
+        "--topology-only",
+        action="store_true",
+        help="import only hosts and reachability, without a playable exploitation layer",
+    )
+
     dashboard = commands.add_parser("dashboard", help="start the interactive local dashboard")
     dashboard.add_argument("--host", default="127.0.0.1")
     dashboard.add_argument("--port", type=int, default=8000)
@@ -256,6 +270,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
     )
     game.add_argument("--rounds", type=int, default=200, help="episodes the defender learns over")
+    game.add_argument(
+        "--attacker",
+        choices=("fixed", "bandit"),
+        default="fixed",
+        help="hold the attacker fixed, or let it learn which policy beats this defender",
+    )
+    game.add_argument(
+        "--defender-policy",
+        choices=("bandit", "contextual"),
+        default="contextual",
+        help="one configuration per episode, or a policy conditioned on the episode so far",
+    )
     game.add_argument("--exploration", type=float, default=0.15)
     game.add_argument("--output", type=Path, default=Path("artifacts/game.jsonl"))
 
@@ -290,6 +316,29 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("scenario", "curriculum"),
         default="curriculum",
         help="fixed capacities let one policy transfer across scenario sizes",
+    )
+    train.add_argument(
+        "--discovery",
+        choices=("exact", "noisy"),
+        default="exact",
+        help="train under exact adjacency, or under the noisy scan model",
+    )
+    train.add_argument(
+        "--defender",
+        choices=("passive", "adaptive"),
+        default="passive",
+        help="train against a passive or an adaptive defender",
+    )
+    train.add_argument(
+        "--reward",
+        choices=("sparse", "shaped", "risk-aware", "cost-aware"),
+        default="risk-aware",
+        help="reward strategy to train against",
+    )
+    train.add_argument(
+        "--forget-previous-stages",
+        action="store_true",
+        help="train each stage in isolation instead of sampling earlier stages too",
     )
     train.add_argument("--output-dir", type=Path, default=Path("artifacts/policies"))
     train.add_argument(
@@ -423,18 +472,44 @@ def _transfer_view_model(
 
 
 def _stage_env_builder(
-    stage: CurriculumStage, step_budget: int, observation_config: ObservationConfig
+    stage: CurriculumStage,
+    step_budget: int,
+    observation_config: ObservationConfig,
+    dynamics: DynamicsConfig | None = None,
+    defender: DefenderConfig | None = None,
+    reward_strategy: RewardStrategy = "risk-aware",
+    previous: Sequence[CurriculumStage] = (),
 ) -> Callable[[], StageEnv]:
-    """Return a zero-argument environment builder for one curriculum stage."""
+    """Return a zero-argument environment builder for one curriculum stage.
+
+    Training conditions must be passed through here: a policy trained under the default
+    dynamics has no reason to handle any other condition, which is exactly how the v0.6
+    policies ended up scoring 0% under noisy discovery.
+    """
 
     factory = stage_env_factory(
         stage,
         step_budget=step_budget,
+        reward_strategy=reward_strategy,
         observation_config=observation_config,
+        dynamics=dynamics,
+        defender=defender,
     )
 
+    earlier = [
+        stage_env_factory(
+            previous_stage,
+            step_budget=step_budget,
+            reward_strategy=reward_strategy,
+            observation_config=observation_config,
+            dynamics=dynamics,
+            defender=defender,
+        )
+        for previous_stage in previous
+    ]
+
     def build() -> StageEnv:
-        return StageEnv(stage, TRAINING_SEEDS, factory)
+        return StageEnv(stage, TRAINING_SEEDS, factory, earlier)
 
     return build
 
@@ -548,10 +623,17 @@ def _run_game(args: argparse.Namespace) -> int:
 
     config = _config_from_args(args)
     agent_factory, label = _agent_factory_from_args(args, config)
+    opponent: BanditDefender | ContextualDefender = (
+        ContextualDefender(exploration=args.exploration)
+        if args.defender_policy == "contextual"
+        else BanditDefender(exploration=args.exploration)
+    )
+    attacker = BanditAttacker(exploration=args.exploration) if args.attacker == "bandit" else None
     result = play(
         config,
         agent_factory,
-        BanditDefender(exploration=args.exploration),
+        opponent,
+        attacker=attacker,
         episodes=args.rounds,
         seed=config.seed,
     )
@@ -564,14 +646,20 @@ def _run_game(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     print("RLAttack attacker vs adaptive defender")
-    print(f"  attacker  : {label}")
+    print(f"  attacker  : {'bandit over baselines' if attacker is not None else label}")
     print(f"  scenarios : {config.size}/{config.difficulty} x {result.episodes} rounds")
     print(f"  attacker success : {result.attacker_success_rate:5.1%}")
     print(f"  detected         : {result.detection_rate:5.1%}")
     print(f"  defender reward  : {result.mean_defender_reward:.3f}")
-    print(f"  settled on       : {result.preferred_arm}")
-    for arm, pulls in result.pulls.items():
-        print(f"  {arm:<16} pulls={pulls:4}  value={result.values[arm]:.3f}")
+    print(f"  defender policy  : {args.defender_policy}")
+    if result.pulls:
+        print(f"  settled on       : {result.preferred_arm}")
+        for arm, pulls in result.pulls.items():
+            print(f"  {arm:<16} pulls={pulls:4}  value={result.values[arm]:.3f}")
+    for policy, pulls in result.attacker_pulls.items():
+        print(
+            f"  attacker {policy:<14} pulls={pulls:4}  value={result.attacker_values[policy]:.3f}"
+        )
     print(f"  export    : {args.output.resolve()}")
     return 0
 
@@ -645,14 +733,30 @@ def _run_training(args: argparse.Namespace) -> int:
             if args.curriculum_timesteps
             else DEFAULT_CURRICULUM
         )
+        dynamics = DynamicsConfig(noisy_discovery=args.discovery == "noisy")
+        defender = DefenderConfig.adaptive() if args.defender == "adaptive" else DefenderConfig()
         train_curriculum(
-            [_stage_env_builder(stage, args.step_budget, observation_config) for stage in stages],
+            [
+                _stage_env_builder(
+                    stage,
+                    args.step_budget,
+                    observation_config,
+                    dynamics,
+                    defender,
+                    cast(RewardStrategy, args.reward),
+                    () if args.forget_previous_stages else stages[:index],
+                )
+                for index, stage in enumerate(stages)
+            ],
             [stage.timesteps for stage in stages],
             PPOTrainingConfig(seed=args.seed, output_dir=args.output_dir),
             algorithm=args.algorithm,
         )
         labels = ", ".join(stage.label for stage in stages)
-        print(f"Trained {args.algorithm} curriculum ({labels}) into {args.output_dir.resolve()}")
+        print(
+            f"Trained {args.algorithm} curriculum ({labels}) under "
+            f"{args.defender}/{args.discovery} into {args.output_dir.resolve()}"
+        )
         return 0
     if args.algorithm == "maskable-ppo":
         print("Masked training requires --curriculum; rerun with --curriculum")
@@ -690,6 +794,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "dashboard":
         print(f"RLAttack dashboard: http://{args.host}:{args.port}")
         run_dashboard(host=args.host, port=args.port)
+        return 0
+    if args.command == "import":
+        imported = import_scenario_file(
+            args.input,
+            scenario_id=args.scenario_id,
+            synthesize_layers=not args.topology_only,
+        )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(imported.model_dump_json(indent=2), encoding="utf-8")
+        print("RLAttack scenario import")
+        print(f"  source    : {args.input}")
+        print(f"  hosts     : {len(imported.hosts)}  edges: {len(imported.network_edges)}")
+        print(f"  entry     : {imported.entry_host_ids[0]}")
+        print(f"  scenario  : {args.output.resolve()}")
         return 0
     if args.command == "scenario":
         generated = generate_scenario(
