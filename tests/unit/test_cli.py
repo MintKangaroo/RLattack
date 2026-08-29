@@ -1,7 +1,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import networkx as nx
 import numpy as np
@@ -700,7 +700,7 @@ def test_cli_game_supports_the_contextual_defender(
 def test_cli_imports_a_published_attack_graph(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    graph = nx.DiGraph()
+    graph: nx.DiGraph[Any] = nx.DiGraph()
     graph.add_edges_from([("web", "app"), ("app", "db")])
     source = tmp_path / "topology.graphml"
     nx.write_graphml(graph, source)
@@ -717,7 +717,7 @@ def test_cli_imports_a_published_attack_graph(
 
 
 def test_cli_can_import_topology_only(tmp_path: Path) -> None:
-    graph = nx.DiGraph()
+    graph: nx.DiGraph[Any] = nx.DiGraph()
     graph.add_edge("a", "b")
     source = tmp_path / "t.graphml"
     nx.write_graphml(graph, source)

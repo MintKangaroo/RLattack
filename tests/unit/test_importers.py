@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import networkx as nx
 import pytest
@@ -9,8 +10,8 @@ from rlattack.env import AttackPathEnv, DynamicsConfig
 from rlattack.importers import import_scenario_file, load_graph, scenario_from_graph
 
 
-def topology() -> nx.DiGraph:
-    graph = nx.DiGraph()
+def topology() -> nx.DiGraph[Any]:
+    graph: nx.DiGraph[Any] = nx.DiGraph()
     graph.add_edges_from(
         [("web", "app-1"), ("web", "app-2"), ("app-1", "db"), ("app-2", "db"), ("db", "backup")]
     )
@@ -80,7 +81,7 @@ def test_topology_only_imports_skip_the_exploitation_layer(tmp_path: Path) -> No
 
 
 def test_edge_costs_are_carried_over(tmp_path: Path) -> None:
-    graph = nx.DiGraph()
+    graph: nx.DiGraph[Any] = nx.DiGraph()
     graph.add_edge("a", "b", weight=2.5)
     graph.add_edge("b", "c", cost=4.0)
 
@@ -91,19 +92,19 @@ def test_edge_costs_are_carried_over(tmp_path: Path) -> None:
 
 
 def test_unusable_graphs_are_rejected(tmp_path: Path) -> None:
-    empty = nx.DiGraph()
+    empty: nx.DiGraph[Any] = nx.DiGraph()
     empty.add_node("v", kind="vulnerability")
     with pytest.raises(ValueError, match="no host nodes"):
         scenario_from_graph(empty)
 
-    isolated = nx.DiGraph()
+    isolated: nx.DiGraph[Any] = nx.DiGraph()
     isolated.add_node("a")
     with pytest.raises(ValueError, match="no reachability edges"):
         scenario_from_graph(isolated)
 
 
 def test_live_identifiers_are_rejected(tmp_path: Path) -> None:
-    graph = nx.DiGraph()
+    graph: nx.DiGraph[Any] = nx.DiGraph()
     graph.add_node("a", hostname="prod-db")
     graph.add_edge("a", "b")
 
@@ -112,7 +113,7 @@ def test_live_identifiers_are_rejected(tmp_path: Path) -> None:
 
 
 def test_a_cyclic_graph_still_picks_an_entry_and_objective() -> None:
-    graph = nx.DiGraph()
+    graph: nx.DiGraph[Any] = nx.DiGraph()
     graph.add_edges_from([("a", "b"), ("b", "c"), ("c", "a")])
 
     scenario = scenario_from_graph(graph)
