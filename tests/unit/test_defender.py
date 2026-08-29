@@ -15,13 +15,17 @@ def rng(seed: int = 0) -> np.random.Generator:
 
 def alerted(credentials: tuple[int, ...] = (0, 1)) -> DefenderState:
     return DefenderState(
-        detection_risk=0.9,
+        observed_risk=0.9,
         steps_since_response=99,
         acquired_credentials=credentials,
     )
 
 
 def test_configuration_is_validated() -> None:
+    with pytest.raises(ValueError, match="response_latency"):
+        DefenderConfig(response_latency=-1)
+    with pytest.raises(ValueError, match="observation_noise"):
+        DefenderConfig(observation_noise=-0.1)
     with pytest.raises(ValueError, match="alert_threshold"):
         DefenderConfig(alert_threshold=1.5)
     with pytest.raises(ValueError, match="hardening_step"):
@@ -41,7 +45,7 @@ def test_a_disabled_defender_is_the_control_condition() -> None:
 
 def test_the_defender_waits_below_the_alert_threshold() -> None:
     state = DefenderState(
-        detection_risk=0.01,
+        observed_risk=0.01,
         steps_since_response=99,
         acquired_credentials=(0,),
     )
@@ -51,7 +55,7 @@ def test_the_defender_waits_below_the_alert_threshold() -> None:
 
 def test_the_defender_respects_its_cooldown() -> None:
     state = DefenderState(
-        detection_risk=0.9,
+        observed_risk=0.9,
         steps_since_response=1,
         acquired_credentials=(0,),
     )

@@ -105,6 +105,12 @@ class DynamicsConfig:
     an absolute budget of noisy actions, so a larger network is unwinnable purely
     because reaching its objective takes more steps - which shows up in a transfer
     table as a generalization failure that is really a calibration artifact.
+
+    ``noisy_discovery`` turns neighbour discovery into a scan. With exact adjacency the
+    action mask itself reveals the topology: it offers ``discover_host`` for precisely
+    the hosts that are genuinely adjacent, so the agent reads the graph instead of
+    probing it. When enabled, every undiscovered host can be probed, only genuinely
+    adjacent ones can succeed, and they succeed with ``discovery_probability``.
     """
 
     stochastic: bool = True
@@ -115,6 +121,8 @@ class DynamicsConfig:
     pivot_risk: float = 0.03
     normalize_risk_by_size: bool = True
     risk_reference_hosts: int = 6
+    noisy_discovery: bool = False
+    discovery_probability: float = 0.7
 
     def __post_init__(self) -> None:
         for name in ("base_success_probability", "minimum_success_probability"):
@@ -129,6 +137,8 @@ class DynamicsConfig:
                 raise ValueError(f"{name} must be in [0, 1]")
         if self.risk_reference_hosts < 1:
             raise ValueError("risk_reference_hosts must be positive")
+        if not 0.0 < self.discovery_probability <= 1.0:
+            raise ValueError("discovery_probability must be in (0, 1]")
 
     @classmethod
     def deterministic(cls) -> DynamicsConfig:
@@ -327,6 +337,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._acquired_credentials = np.zeros(self._credential_width, dtype=np.int8)
         self._acquired_privileges = np.zeros(self._privilege_width, dtype=np.int8)
         self._collected_objectives = np.zeros(self._objective_width, dtype=np.int8)
+        self._failed_discovery = np.zeros(self._host_width, dtype=np.int8)
         for host_id in self._entry_hosts:
             index = self._host_index[host_id]
             self._discovered_hosts[index] = 1
@@ -344,7 +355,9 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._last_response_step = 0
         self._defender_actions = 0
         self._revoked_credentials = 0
+        self._defender_false_positives = 0
         self._last_defender_response = DefenderResponse()
+        self._pending_response: tuple[DefenderResponse, int, bool] | None = None
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -362,6 +375,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "target_count": self.target_count,
             "defender_action": "none",
             "defender_actions": 0,
+            "defender_false_positives": 0,
+            "defender_pending": False,
             "revoked_credentials": 0,
             "objective_captured": False,
             "collected_objectives": 0,
@@ -424,6 +439,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         else:
             reward += self._apply(action_type, target)
         self._steps += 1
+        self._refresh_exhausted_probes()
         self._apply_defender()
         reward += self._detection_risk * self.reward_config.detection_risk
         if self._detection_risk >= self.dynamics.detection_threshold and not self._terminated:
@@ -445,6 +461,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "alert_level": self.alert_level(),
             "defender_action": self._last_defender_response.name,
             "defender_actions": self._defender_actions,
+            "defender_false_positives": self._defender_false_positives,
+            "defender_pending": self._pending_response is not None,
             "revoked_credentials": self._revoked_credentials,
             "detected": self._detected,
             "objective_captured": self._objective_captured,
@@ -488,6 +506,13 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
     # ------------------------------------------------------------ validity
 
     def _discoverable_hosts(self) -> Iterator[int]:
+        if self.dynamics.noisy_discovery:
+            # Probing is available for any host we have not discovered or already
+            # probed from the current vantage points; adjacency is not revealed here.
+            for index in range(len(self.scenario.hosts)):
+                if not self._discovered_hosts[index] and not self._failed_discovery[index]:
+                    yield index
+            return
         for index in range(len(self.scenario.hosts)):
             if not self._discovered_hosts[index] and self._reachable_edges(index):
                 yield index
@@ -580,10 +605,13 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
     # ------------------------------------------------------------- handlers
 
     def _discover_host(self, target: int) -> float:
-        edge = min(
-            self._reachable_edges(target),
-            key=lambda edge: (edge.cost, edge.source_host_id),
-        )
+        edges = self._reachable_edges(target)
+        if self.dynamics.noisy_discovery and (
+            not edges or not self._succeeds(self.dynamics.discovery_probability)
+        ):
+            self._failed_discovery[target] = 1
+            return self._failed_attempt((self.scenario.hosts[target].id,))
+        edge = min(edges, key=lambda edge: (edge.cost, edge.source_host_id))
         self._discovered_hosts[target] = 1
         self._path_cost += edge.cost
         self._affected_nodes = (edge.source_host_id, edge.target_host_id)
@@ -593,6 +621,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
     def _pivot_network(self, target: int) -> float:
         edge = self._pivot_edges(target)[0]
         self._reachable_hosts[target] = 1
+        # A new vantage point makes previously fruitless probes worth repeating.
+        self._failed_discovery[:] = 0
         self._raise_risk(self.dynamics.pivot_risk)
         self._affected_nodes = (edge.source_host_id, edge.target_host_id)
         self._outcome = "success"
@@ -677,12 +707,23 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
     # -------------------------------------------------------------- helpers
 
     def _apply_defender(self) -> None:
-        """Let the simulated defender respond to the attacker's trajectory."""
+        """Advance the defender: land a scheduled response, or schedule a new one.
 
+        A decision does not take effect immediately. It is queued for
+        ``response_latency`` steps, so an attacker that finishes quickly can outrun a
+        response the defender has already decided on.
+        """
+
+        self._last_defender_response = DefenderResponse()
+        if self._land_pending_response():
+            return
+        if self._pending_response is not None:
+            return
+        observed_risk = self._observed_risk()
         response = decide_response(
             self.defender,
             DefenderState(
-                detection_risk=self._detection_risk,
+                observed_risk=observed_risk,
                 steps_since_response=self._steps - self._last_response_step,
                 acquired_credentials=tuple(
                     int(index) for index in np.flatnonzero(self._acquired_credentials)
@@ -690,17 +731,62 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             ),
             self.np_random,
         )
-        self._last_defender_response = response
         if response.name == "none":
             return
+        false_positive = self._detection_risk < self.defender.alert_threshold
+        self._pending_response = (
+            response,
+            self._steps + self.defender.response_latency,
+            false_positive,
+        )
+        # A zero-latency defender responds within the same step it decided.
+        self._land_pending_response()
+
+    def _refresh_exhausted_probes(self) -> None:
+        """Re-open probing once every undiscovered host has been probed and missed.
+
+        Without this a chain topology deadlocks: the single adjacent host fails its
+        scan, every other probe fails because it is not adjacent, and the agent has no
+        discovery action left to reach a new vantage point.
+        """
+
+        if not self.dynamics.noisy_discovery:
+            return
+        undiscovered = [
+            index for index in range(len(self.scenario.hosts)) if not self._discovered_hosts[index]
+        ]
+        if undiscovered and all(self._failed_discovery[index] for index in undiscovered):
+            self._failed_discovery[:] = 0
+
+    def _land_pending_response(self) -> bool:
+        """Apply a queued defender response once its latency has elapsed."""
+
+        if self._pending_response is None:
+            return False
+        response, due_step, false_positive = self._pending_response
+        if self._steps < due_step:
+            return False
+        self._pending_response = None
+        self._last_defender_response = response
         self._last_response_step = self._steps
         self._defender_actions += 1
+        if false_positive:
+            self._defender_false_positives += 1
         if response.harden:
             self._host_hardening[np.flatnonzero(self._reachable_hosts)] += (
                 self.defender.hardening_step
             )
         if response.revoke_credential is not None:
             self._revoke_credential(response.revoke_credential)
+        return True
+
+    def _observed_risk(self) -> float:
+        """Return the defender's noisy estimate of the attacker's detection risk."""
+
+        if self.defender.observation_noise <= 0.0:
+            return self._detection_risk
+        noise = float(self.np_random.normal(0.0, self.defender.observation_noise))
+        return min(1.0, max(0.0, self._detection_risk + noise))
 
     def _revoke_credential(self, index: int) -> None:
         """Drop one simulated credential, and the privilege it alone granted."""

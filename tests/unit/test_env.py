@@ -373,6 +373,8 @@ def test_an_adaptive_defender_hardens_monitoring_and_revokes_credentials() -> No
             response_cooldown=1,
             revocation_probability=1.0,
             hardening_step=1.0,
+            response_latency=0,
+            observation_noise=0.0,
         ),
     )
     env.reset(seed=1)
@@ -406,6 +408,8 @@ def test_hardening_raises_the_detection_cost_of_reached_hosts() -> None:
         response_cooldown=1,
         revocation_probability=0.0,
         hardening_step=1.0,
+        response_latency=0,
+        observation_noise=0.0,
     )
 
     assert enumeration_risk(hardened) > enumeration_risk(DefenderConfig())
@@ -490,3 +494,103 @@ def test_detection_risk_is_normalized_by_network_size() -> None:
 
     assert enumeration_risk(12, normalize=True) < enumeration_risk(12, normalize=False)
     assert enumeration_risk(3, normalize=True) == enumeration_risk(3, normalize=False)
+
+
+def latent_defender(**overrides: object) -> DefenderConfig:
+    settings: dict[str, object] = {
+        "enabled": True,
+        "alert_threshold": 0.0,
+        "response_cooldown": 1,
+        "revocation_probability": 0.0,
+        "hardening_step": 1.0,
+        "response_latency": 3,
+        "observation_noise": 0.0,
+    }
+    settings.update(overrides)
+    return DefenderConfig(**settings)  # type: ignore[arg-type]
+
+
+def test_a_defender_response_lands_only_after_its_latency() -> None:
+    env = AttackPathEnv(
+        make_scenario(),
+        step_budget=40,
+        dynamics=DynamicsConfig.deterministic(),
+        defender=latent_defender(),
+    )
+    env.reset(seed=1)
+
+    _, _, _, _, info = env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+
+    assert info["defender_pending"] is True
+    assert info["defender_actions"] == 0
+
+    for _ in range(3):
+        _, _, _, _, info = env.step(env.encode_action(Action.ENUMERATE_SERVICE, 0))
+
+    assert info["defender_pending"] is False
+    assert info["defender_actions"] == 1
+    assert info["defender_action"] == "harden_monitoring"
+
+
+def test_defender_observation_noise_produces_false_positives() -> None:
+    env = AttackPathEnv(
+        make_scenario(),
+        step_budget=40,
+        dynamics=DynamicsConfig.deterministic(),
+        defender=latent_defender(alert_threshold=0.9, observation_noise=5.0, response_latency=0),
+    )
+    env.reset(seed=1)
+    for _ in range(6):
+        _, _, _, _, info = env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+
+    assert info["detection_risk"] < 0.9
+    assert info["defender_false_positives"] >= 1
+
+
+def test_noisy_discovery_hides_the_topology_from_the_action_mask() -> None:
+    base = make_scenario()
+    scenario = base.model_copy(update={"hosts": (*base.hosts, Host(id="isolated"))})
+    exact = AttackPathEnv(scenario, dynamics=DynamicsConfig.deterministic())
+    noisy = AttackPathEnv(scenario, dynamics=DynamicsConfig(stochastic=False, noisy_discovery=True))
+    exact.reset(seed=1)
+    noisy.reset(seed=1)
+
+    exact_mask = exact.action_mask().reshape(len(Action), exact.target_count)
+    noisy_mask = noisy.action_mask().reshape(len(Action), noisy.target_count)
+
+    assert exact_mask[Action.DISCOVER_HOST].tolist()[:3] == [0, 1, 0]
+    assert noisy_mask[Action.DISCOVER_HOST].tolist()[:3] == [0, 1, 1]
+
+    _, reward, _, _, info = noisy.step(noisy.encode_action(Action.DISCOVER_HOST, 2))
+
+    assert info["outcome"] == "failed"
+    assert reward < 0
+    assert (
+        noisy.action_mask().reshape(len(Action), noisy.target_count)[Action.DISCOVER_HOST, 2] == 0
+    )
+
+
+def test_probing_reopens_once_every_candidate_has_been_missed() -> None:
+    env = AttackPathEnv(
+        make_scenario(),
+        step_budget=40,
+        dynamics=DynamicsConfig(
+            stochastic=True,
+            noisy_discovery=True,
+            discovery_probability=0.01,
+            base_success_probability=1.0,
+        ),
+    )
+    env.reset(seed=1)
+
+    _, _, _, _, info = env.step(env.encode_action(Action.DISCOVER_HOST, 1))
+
+    assert info["outcome"] == "failed"
+    assert env.action_mask().reshape(len(Action), env.target_count)[Action.DISCOVER_HOST, 1] == 1, (
+        "the only candidate must be offered again instead of deadlocking"
+    )
+
+
+def test_discovery_probability_is_validated() -> None:
+    with pytest.raises(ValueError, match="discovery_probability"):
+        DynamicsConfig(discovery_probability=0.0)

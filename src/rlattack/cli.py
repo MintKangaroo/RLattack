@@ -24,6 +24,7 @@ from rlattack.experiment import (
     REWARD_STRATEGIES,
     AgentName,
     DefenderMode,
+    DiscoveryMode,
     ExperimentConfig,
     ObservationMode,
     benchmark_seeds,
@@ -80,6 +81,12 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
         choices=("passive", "adaptive"),
         default="passive",
         help="passive is the control condition; adaptive responds to the attacker",
+    )
+    parser.add_argument(
+        "--discovery",
+        choices=("exact", "noisy"),
+        default="exact",
+        help="exact adjacency, or a noisy scan that does not reveal the topology",
     )
 
 
@@ -239,6 +246,7 @@ def _config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         stochastic=not args.deterministic,
         observation=cast(ObservationMode, args.observation),
         defender=cast(DefenderMode, args.defender),
+        discovery=cast(DiscoveryMode, args.discovery),
     )
 
 
@@ -256,6 +264,7 @@ def _run_benchmark(args: argparse.Namespace) -> int:
     print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
     print(f"  dynamics  : {'stochastic' if config.stochastic else 'deterministic'}")
     print(f"  defender  : {config.defender}")
+    print(f"  discovery : {config.discovery}")
     for name, metric in metrics.items():
         print(
             f"  {name:<14} success={metric.success_rate:5.1%} "

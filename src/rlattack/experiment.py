@@ -27,6 +27,7 @@ from rlattack.scenario import Scenario
 AgentName = Literal["random", "greedy", "rule-based", "shortest-path"]
 ObservationMode = Literal["scenario", "curriculum"]
 DefenderMode = Literal["passive", "adaptive"]
+DiscoveryMode = Literal["exact", "noisy"]
 
 REWARD_STRATEGIES: tuple[RewardStrategy, ...] = ("sparse", "shaped", "risk-aware", "cost-aware")
 
@@ -55,6 +56,7 @@ class ExperimentConfig:
     stochastic: bool = True
     observation: ObservationMode = "scenario"
     defender: DefenderMode = "passive"
+    discovery: DiscoveryMode = "exact"
 
     def __post_init__(self) -> None:
         if self.size not in {"small", "medium", "large"}:
@@ -77,11 +79,16 @@ class ExperimentConfig:
             raise ValueError("observation must be scenario or curriculum")
         if self.defender not in ("passive", "adaptive"):
             raise ValueError("defender must be passive or adaptive")
+        if self.discovery not in ("exact", "noisy"):
+            raise ValueError("discovery must be exact or noisy")
 
     def dynamics(self) -> DynamicsConfig:
         """Return the transition-uncertainty configuration for this experiment."""
 
-        return DynamicsConfig() if self.stochastic else DynamicsConfig.deterministic()
+        noisy = self.discovery == "noisy"
+        if self.stochastic:
+            return DynamicsConfig(noisy_discovery=noisy)
+        return DynamicsConfig(stochastic=False, noisy_discovery=noisy)
 
     def defender_config(self) -> DefenderConfig:
         """Return the defender condition: passive control, or adaptive treatment."""
