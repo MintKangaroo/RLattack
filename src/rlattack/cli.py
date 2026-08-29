@@ -11,10 +11,11 @@ from typing import cast
 from rlattack import __version__
 from rlattack.agents import Agent
 from rlattack.dashboard import run_dashboard
-from rlattack.env import AttackPathEnv
+from rlattack.env import AttackPathEnv, ObservationConfig
 from rlattack.experiment import (
     AgentName,
     ExperimentConfig,
+    ObservationMode,
     build_dashboard_data,
     run_benchmarks,
 )
@@ -52,6 +53,12 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
         "--deterministic",
         action="store_true",
         help="disable transition uncertainty so every valid action succeeds",
+    )
+    parser.add_argument(
+        "--observation",
+        choices=("scenario", "curriculum"),
+        default="scenario",
+        help="scenario-sized observations, or fixed capacities that transfer across sizes",
     )
 
 
@@ -107,6 +114,12 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--seed", type=int, default=42)
     train.add_argument("--timesteps", type=int, default=10_000)
     train.add_argument("--step-budget", type=int, default=64)
+    train.add_argument(
+        "--observation",
+        choices=("scenario", "curriculum"),
+        default="curriculum",
+        help="fixed capacities let one policy transfer across scenario sizes",
+    )
     train.add_argument("--output-dir", type=Path, default=Path("artifacts/policies"))
     return parser
 
@@ -121,6 +134,7 @@ def _config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         step_budget=args.step_budget,
         benchmark_episodes=args.episodes,
         stochastic=not args.deterministic,
+        observation=cast(ObservationMode, args.observation),
     )
 
 
@@ -161,8 +175,18 @@ def _run_training(args: argparse.Namespace) -> int:
         args.seed,
     )
 
+    observation_config = (
+        ObservationConfig.for_curriculum()
+        if args.observation == "curriculum"
+        else ObservationConfig()
+    )
+
     def env_factory() -> AttackPathEnv:
-        return AttackPathEnv(scenario, step_budget=args.step_budget)
+        return AttackPathEnv(
+            scenario,
+            step_budget=args.step_budget,
+            observation_config=observation_config,
+        )
 
     if args.algorithm == "dqn":
         train_dqn(

@@ -26,6 +26,7 @@ def test_experiment_config_validates_public_inputs() -> None:
         {"benchmark_episodes": 0},
         {"step_budget": 10_000},
         {"benchmark_episodes": 10_000},
+        {"observation": "partial"},
     )
     for values in invalid_values:
         with pytest.raises(ValueError):
@@ -110,3 +111,11 @@ def test_dashboard_data_uses_default_config() -> None:
 
     assert data["config"]["size"] == "medium"
     assert data["reward"]["strategy"] == "risk-aware"
+
+
+def test_curriculum_observation_mode_fixes_the_interface_widths() -> None:
+    scenario_sized = ExperimentConfig().observation_config()
+    curriculum = ExperimentConfig(observation="curriculum").observation_config()
+
+    assert scenario_sized.host_capacity is None
+    assert curriculum.host_capacity == 16

@@ -16,7 +16,7 @@ from rlattack.agents import (
     ShortestPathOracle,
     reset_agent,
 )
-from rlattack.env import AttackPathEnv, DynamicsConfig
+from rlattack.env import AttackPathEnv, DynamicsConfig, ObservationConfig
 from rlattack.evaluation import BenchmarkMetrics, evaluate_agent
 from rlattack.explain import EpisodeTrace, explain_action
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
@@ -24,6 +24,7 @@ from rlattack.reward import RewardStrategy, build_reward_config
 from rlattack.scenario import Scenario
 
 AgentName = Literal["random", "greedy", "rule-based", "shortest-path"]
+ObservationMode = Literal["scenario", "curriculum"]
 
 MAX_STEP_BUDGET = 512
 MAX_BENCHMARK_EPISODES = 256
@@ -48,6 +49,7 @@ class ExperimentConfig:
     step_budget: int = 64
     benchmark_episodes: int = 8
     stochastic: bool = True
+    observation: ObservationMode = "scenario"
 
     def __post_init__(self) -> None:
         if self.size not in {"small", "medium", "large"}:
@@ -66,11 +68,20 @@ class ExperimentConfig:
             raise ValueError(f"step_budget must be at most {MAX_STEP_BUDGET}")
         if self.benchmark_episodes > MAX_BENCHMARK_EPISODES:
             raise ValueError(f"benchmark_episodes must be at most {MAX_BENCHMARK_EPISODES}")
+        if self.observation not in ("scenario", "curriculum"):
+            raise ValueError("observation must be scenario or curriculum")
 
     def dynamics(self) -> DynamicsConfig:
         """Return the transition-uncertainty configuration for this experiment."""
 
         return DynamicsConfig() if self.stochastic else DynamicsConfig.deterministic()
+
+    def observation_config(self) -> ObservationConfig:
+        """Return the observation interface: scenario-sized, or fixed for transfer."""
+
+        if self.observation == "curriculum":
+            return ObservationConfig.for_curriculum()
+        return ObservationConfig()
 
 
 @dataclass(frozen=True)
@@ -128,6 +139,7 @@ def run_episode(
     step_budget: int = 64,
     reward_strategy: RewardStrategy = "shaped",
     dynamics: DynamicsConfig | None = None,
+    observation_config: ObservationConfig | None = None,
 ) -> EpisodeResult:
     """Run one baseline episode and retain an explainable trajectory."""
 
@@ -137,6 +149,7 @@ def run_episode(
         step_budget=step_budget,
         reward_config=reward_config,
         dynamics=dynamics,
+        observation_config=observation_config,
     )
     agent = create_agent(agent_name, scenario, seed=seed)
     reset_agent(agent, seed=seed)
@@ -223,6 +236,7 @@ def run_benchmarks(
 
     reward_config = build_reward_config(config.reward_strategy)
     dynamics = config.dynamics()
+    observation_config = config.observation_config()
 
     def scenario_for(seed: int) -> Scenario:
         return generate_scenario(config.size, config.difficulty, seed)
@@ -233,6 +247,7 @@ def run_benchmarks(
             step_budget=config.step_budget,
             reward_config=reward_config,
             dynamics=dynamics,
+            observation_config=observation_config,
         )
 
     def agent_factory(name: AgentName) -> Callable[[int], Agent]:
@@ -264,6 +279,7 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
         step_budget=selected.step_budget,
         reward_strategy=selected.reward_strategy,
         dynamics=selected.dynamics(),
+        observation_config=selected.observation_config(),
     )
     benchmarks = run_benchmarks(selected)
     metrics = [

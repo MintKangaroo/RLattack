@@ -44,7 +44,9 @@ def explain_action(
     """Explain a flat environment action from observable state only.
 
     ``info`` must carry the environment's ``target_count`` so the flat action can be
-    split back into an action type and a graph target.
+    split back into an action type and a graph target. The true ``detection_risk`` is
+    read from ``info`` rather than from the observation, because the agent itself may
+    only observe a quantized alert level.
     """
 
     stride = info.get("target_count")
@@ -58,7 +60,7 @@ def explain_action(
     discovered = int(np.sum(observation["discovered_hosts"]))
     services = int(np.sum(observation["known_services"]))
     privileges = int(np.sum(observation["acquired_privileges"]))
-    risk = float(observation["detection_risk"][0])
+    risk = float(info.get("detection_risk", 0.0))
     budget = float(observation["steps_remaining"][0])
     reasons = (
         f"discovered_hosts={discovered}",

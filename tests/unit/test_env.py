@@ -2,7 +2,13 @@ import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
 
-from rlattack.env import ACTION_NAMES, Action, AttackPathEnv, DynamicsConfig
+from rlattack.env import (
+    ACTION_NAMES,
+    Action,
+    AttackPathEnv,
+    DynamicsConfig,
+    ObservationConfig,
+)
 from rlattack.scenario import (
     AccessEdge,
     Credential,
@@ -290,3 +296,53 @@ def test_hosts_without_modeled_credentials_can_be_pivoted_from() -> None:
     assert info["valid_action"] is True
     assert info["outcome"] == "success"
     assert reward > 0
+
+
+def test_observation_capacities_are_validated() -> None:
+    with pytest.raises(ValueError, match="host_capacity"):
+        ObservationConfig(host_capacity=0)
+    with pytest.raises(ValueError, match="alert_levels"):
+        ObservationConfig(alert_levels=1)
+    with pytest.raises(ValueError, match="smaller than the scenario"):
+        AttackPathEnv(make_scenario(), observation_config=ObservationConfig(host_capacity=1))
+
+
+def test_fixed_capacities_hide_the_network_size() -> None:
+    env = AttackPathEnv(make_scenario(), observation_config=ObservationConfig.for_curriculum())
+    observation, info = env.reset(seed=1)
+
+    assert observation["discovered_hosts"].shape == (16,)
+    assert observation["known_services"].shape == (32,)
+    assert info["target_count"] == 32
+    assert int(observation["discovered_hosts"].sum()) == 1
+
+
+def test_the_agent_observes_a_quantized_alert_level_by_default() -> None:
+    env = AttackPathEnv(
+        make_scenario(),
+        dynamics=DynamicsConfig(stochastic=False, pivot_risk=0.5, detection_threshold=0.9),
+    )
+    observation, info = env.reset(seed=1)
+
+    assert "detection_risk" not in observation
+    assert observation["alert_level"].tolist() == [1, 0, 0]
+    assert info["alert_level"] == 0
+
+    for action_type, target in SUCCESS_PATH[:7]:
+        observation, _, _, _, info = env.step(env.encode_action(action_type, target))
+
+    assert info["detection_risk"] > 0.5
+    assert observation["alert_level"].tolist() == [0, 1, 0]
+    assert info["alert_level"] == 1
+
+
+def test_exact_risk_can_be_exposed_for_analysis_runs() -> None:
+    env = AttackPathEnv(
+        make_scenario(),
+        observation_config=ObservationConfig(expose_exact_risk=True),
+        dynamics=DynamicsConfig.deterministic(),
+    )
+    observation, _ = env.reset(seed=1)
+
+    assert observation["detection_risk"].tolist() == [0.0]
+    assert "alert_level" in observation
