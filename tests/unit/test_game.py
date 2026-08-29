@@ -208,7 +208,7 @@ def test_the_contextual_defender_is_validated_and_records_visits() -> None:
 
     assert len(table) == 1
     assert next(iter(table.values())) == 1.0
-    assert context.key == (1, True, 0)
+    assert context.key == (1, True, 0, 0)
 
 
 def test_the_contextual_defender_exploits_what_it_learned() -> None:
@@ -265,3 +265,19 @@ def test_a_fixed_attacker_reports_no_learned_preference() -> None:
 
     assert result.attacker_pulls == {}
     assert result.attacker_values == {}
+
+
+def test_budget_pressure_is_part_of_the_defender_context() -> None:
+    relaxed = DefenderContext(alert_band=1, has_credentials=True, phase=1, budget_pressure=0)
+    strained = DefenderContext(alert_band=1, has_credentials=True, phase=1, budget_pressure=2)
+
+    assert relaxed.key != strained.key
+
+    defender = ContextualDefender(exploration=0.0)
+    defender.reset(seed=0)
+    defender.start_episode()
+    defender.action_for(relaxed)
+    defender.action_for(strained)
+    defender.finish_episode(1.0)
+
+    assert len(defender.table) == 2, "budget pressure must select a distinct policy entry"

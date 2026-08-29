@@ -31,6 +31,11 @@ class DefenderConfig:
       detection risk, which produces both false positives below the threshold and
       missed responses above it. A defender with perfect risk telemetry is a stronger
       adversary than any real one.
+
+    ``response_budget`` caps how many responses one episode can absorb. A flat
+    per-response penalty prices responding but still lets a defender respond without
+    limit; a budget models the operational load a team can actually carry, and forces
+    the defender to choose *when* to spend rather than only whether to act at all.
     """
 
     enabled: bool = False
@@ -40,6 +45,7 @@ class DefenderConfig:
     response_cooldown: int = 6
     response_latency: int = 3
     observation_noise: float = 0.06
+    response_budget: int | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.alert_threshold <= 1.0:
@@ -54,6 +60,8 @@ class DefenderConfig:
             raise ValueError("response_latency must not be negative")
         if self.observation_noise < 0.0:
             raise ValueError("observation_noise must not be negative")
+        if self.response_budget is not None and self.response_budget < 1:
+            raise ValueError("response_budget must be positive when set")
 
     @classmethod
     def adaptive(cls) -> DefenderConfig:
@@ -199,24 +207,28 @@ class BanditDefender:
 
 DEFENDER_ACTIONS: tuple[str, ...] = ("none", "harden", "revoke")
 
+ContextKey = tuple[int, bool, int, int]
+
 
 @dataclass(frozen=True)
 class DefenderContext:
     """What the defender can see about the episode so far.
 
     Deliberately coarse and observable: an alert band rather than the exact risk,
-    whether there is anything to revoke, and how far into the budget the episode is.
+    whether there is anything to revoke, how far into the step budget the episode is,
+    and how much of the response budget is already spent.
     """
 
     alert_band: int
     has_credentials: bool
     phase: int
+    budget_pressure: int = 0
 
     @property
-    def key(self) -> tuple[int, bool, int]:
+    def key(self) -> tuple[int, bool, int, int]:
         """Return the table key for this context."""
 
-        return (self.alert_band, self.has_credentials, self.phase)
+        return (self.alert_band, self.has_credentials, self.phase, self.budget_pressure)
 
 
 @dataclass
@@ -247,9 +259,9 @@ class ContextualDefender:
         """Clear the learned table and restart the selection stream."""
 
         self._rng = np.random.default_rng(seed)
-        self._counts: dict[tuple[tuple[int, bool, int], int], int] = {}
-        self._values: dict[tuple[tuple[int, bool, int], int], float] = {}
-        self._episode: list[tuple[tuple[int, bool, int], int]] = []
+        self._counts: dict[tuple[ContextKey, int], int] = {}
+        self._values: dict[tuple[ContextKey, int], float] = {}
+        self._episode: list[tuple[ContextKey, int]] = []
 
     def start_episode(self) -> None:
         """Forget the previous episode's visited pairs."""
@@ -257,7 +269,7 @@ class ContextualDefender:
         self._episode = []
 
     @property
-    def table(self) -> dict[tuple[tuple[int, bool, int], int], float]:
+    def table(self) -> dict[tuple[ContextKey, int], float]:
         """Return the learned value of each (context, action) pair."""
 
         return dict(self._values)
