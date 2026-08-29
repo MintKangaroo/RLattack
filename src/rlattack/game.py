@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 
 from rlattack.agents import Agent
 from rlattack.bandit import EpsilonGreedy
@@ -121,6 +121,28 @@ def defender_reward(
     justified = max(0, outcome.defender_actions - outcome.defender_false_positives)
     penalty = justified * response_cost + outcome.defender_false_positives * false_positive_cost
     return outcome_reward - penalty
+
+
+def episode_defender_reward(info: dict[str, Any]) -> float:
+    """Score a finished episode for the defender straight from the environment's info.
+
+    The adversarial training loop has no :class:`EpisodeOutcome` to hand - Stable-
+    Baselines3 owns the episode - so the same scoring is available from ``info``.
+    """
+
+    return defender_reward(
+        EpisodeOutcome(
+            seed=0,
+            success=bool(info["objective_captured"]),
+            detected=bool(info["detected"]),
+            steps=int(info["steps"]),
+            reward=0.0,
+            detection_risk=float(info["detection_risk"]),
+            path_cost=float(info["path_cost"]),
+            defender_actions=int(info["defender_actions"]),
+            defender_false_positives=int(info["defender_false_positives"]),
+        )
+    )
 
 
 def play(

@@ -15,9 +15,10 @@ import gymnasium as gym
 import numpy as np
 
 from rlattack.agents import Agent
-from rlattack.defender import DefenderConfig
+from rlattack.defender import ContextualDefender, DefenderConfig
 from rlattack.env import AttackPathEnv, DynamicsConfig, Observation, ObservationConfig
 from rlattack.evaluation import BenchmarkMetrics, evaluate_agent
+from rlattack.game import episode_defender_reward
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.reward import RewardStrategy, build_reward_config
 
@@ -151,6 +152,7 @@ class StageEnv(gym.Env[Observation, np.int64]):
         seeds: Sequence[int],
         env_factory: Callable[[int], AttackPathEnv],
         previous: Sequence[Callable[[int], AttackPathEnv]] = (),
+        defender_policy: ContextualDefender | None = None,
     ) -> None:
         if not seeds:
             raise ValueError("a stage needs at least one training seed")
@@ -162,6 +164,12 @@ class StageEnv(gym.Env[Observation, np.int64]):
         # its episode buffer across stages.
         factories = [env_factory, *previous]
         self._envs = [factory(seed) for factory in factories for seed in self.seeds]
+        self.defender_policy = defender_policy
+        if defender_policy is not None:
+            for env in self._envs:
+                env.defender_policy = defender_policy
+                env.defender = defender_policy.config
+        self._pending_outcome: dict[str, Any] | None = None
         self._current = self._envs[0]
         self.observation_space = self._current.observation_space
         self.action_space = self._current.action_space
@@ -182,12 +190,31 @@ class StageEnv(gym.Env[Observation, np.int64]):
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
     ) -> tuple[Observation, dict[str, Any]]:
         super().reset(seed=seed)
+        self._close_defender_episode()
         index = int(self.np_random.integers(len(self._envs)))
         self._current = self._envs[index]
         return self._current.reset(seed=int(self.np_random.integers(2**31)), options=options)
 
     def step(self, action: np.int64) -> tuple[Observation, float, bool, bool, dict[str, Any]]:
-        return self._current.step(action)
+        observation, reward, terminated, truncated, info = self._current.step(action)
+        if self.defender_policy is not None and (terminated or truncated):
+            self._pending_outcome = info
+        return observation, reward, terminated, truncated, info
+
+    def _close_defender_episode(self) -> None:
+        """Score the finished episode for the defender and start its next one.
+
+        Stable-Baselines3 owns the episode loop, so the adapting defender is driven from
+        the environment's own reset rather than from a game loop outside it.
+        """
+
+        policy = self.defender_policy
+        if policy is None:
+            return
+        if self._pending_outcome is not None:
+            policy.finish_episode(episode_defender_reward(self._pending_outcome))
+            self._pending_outcome = None
+        policy.start_episode()
 
     def action_masks(self) -> np.ndarray[Any, np.dtype[np.bool_]]:
         """Delegate the action mask so maskable algorithms see the live scenario."""

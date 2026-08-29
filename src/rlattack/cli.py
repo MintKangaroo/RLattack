@@ -345,6 +345,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="reward strategy to train against",
     )
     train.add_argument(
+        "--adversarial",
+        action="store_true",
+        help="let a contextual defender learn alongside the attacker during training",
+    )
+    train.add_argument(
         "--forget-previous-stages",
         action="store_true",
         help="train each stage in isolation instead of sampling earlier stages too",
@@ -488,6 +493,7 @@ def _stage_env_builder(
     defender: DefenderConfig | None = None,
     reward_strategy: RewardStrategy = "risk-aware",
     previous: Sequence[CurriculumStage] = (),
+    defender_policy: ContextualDefender | None = None,
 ) -> Callable[[], StageEnv]:
     """Return a zero-argument environment builder for one curriculum stage.
 
@@ -518,7 +524,7 @@ def _stage_env_builder(
     ]
 
     def build() -> StageEnv:
-        return StageEnv(stage, TRAINING_SEEDS, factory, earlier)
+        return StageEnv(stage, TRAINING_SEEDS, factory, earlier, defender_policy)
 
     return build
 
@@ -772,6 +778,7 @@ def _run_training(args: argparse.Namespace) -> int:
             else DEFAULT_CURRICULUM
         )
         dynamics = DynamicsConfig(noisy_discovery=args.discovery == "noisy")
+        opponent = ContextualDefender() if args.adversarial else None
         defender = DefenderConfig.adaptive() if args.defender == "adaptive" else DefenderConfig()
         train_curriculum(
             [
@@ -783,6 +790,7 @@ def _run_training(args: argparse.Namespace) -> int:
                     defender,
                     cast(RewardStrategy, args.reward),
                     () if args.forget_previous_stages else stages[:index],
+                    opponent,
                 )
                 for index, stage in enumerate(stages)
             ],
@@ -793,7 +801,8 @@ def _run_training(args: argparse.Namespace) -> int:
         labels = ", ".join(stage.label for stage in stages)
         print(
             f"Trained {args.algorithm} curriculum ({labels}) under "
-            f"{args.defender}/{args.discovery} into {args.output_dir.resolve()}"
+            f"{'adversarial' if args.adversarial else args.defender}/{args.discovery} "
+            f"into {args.output_dir.resolve()}"
         )
         return 0
     if args.algorithm == "maskable-ppo":

@@ -17,6 +17,7 @@ from rlattack.game import (
     GameResult,
     attacker_reward,
     defender_reward,
+    episode_defender_reward,
     play,
 )
 from rlattack.generator import generate_scenario
@@ -281,3 +282,32 @@ def test_budget_pressure_is_part_of_the_defender_context() -> None:
     defender.finish_episode(1.0)
 
     assert len(defender.table) == 2, "budget pressure must select a distinct policy entry"
+
+
+def test_an_episode_can_be_scored_straight_from_info() -> None:
+    info = {
+        "objective_captured": False,
+        "detected": True,
+        "steps": 12,
+        "detection_risk": 0.9,
+        "path_cost": 3.0,
+        "defender_actions": 2,
+        "defender_false_positives": 1,
+    }
+
+    scored = episode_defender_reward(info)
+    equivalent = defender_reward(
+        EpisodeOutcome(
+            seed=0,
+            success=False,
+            detected=True,
+            steps=12,
+            reward=0.0,
+            detection_risk=0.9,
+            path_cost=3.0,
+            defender_actions=2,
+            defender_false_positives=1,
+        )
+    )
+
+    assert scored == equivalent
