@@ -640,3 +640,39 @@ def test_enabling_the_defender_does_not_shift_the_attacker_stream() -> None:
     )
 
     assert outcomes(DefenderConfig()) == outcomes(inert)
+
+
+def test_the_agent_remembers_which_hosts_it_probed_and_missed() -> None:
+    """Probe state must be in the observation, not only in the action mask.
+
+    A maskable learner uses the mask to filter its action distribution, not as a network
+    input, so without this channel a policy cannot tell an exhausted sweep from an
+    untouched one.
+    """
+
+    base = make_scenario()
+    scenario = base.model_copy(update={"hosts": (*base.hosts, Host(id="isolated"))})
+    env = AttackPathEnv(scenario, dynamics=DynamicsConfig(stochastic=False, noisy_discovery=True))
+    observation, _ = env.reset(seed=1)
+
+    assert observation["probed_hosts"].tolist() == [0, 0, 0]
+
+    observation, _, _, _, _ = env.step(env.encode_action(Action.DISCOVER_HOST, 2))
+
+    assert observation["probed_hosts"].tolist() == [0, 0, 1]
+
+    observation, _, _, _, _ = env.step(env.encode_action(Action.DISCOVER_HOST, 1))
+
+    assert observation["probed_hosts"].tolist() == [0, 0, 0], (
+        "a successful discovery re-opens the sweep, and the memory must follow"
+    )
+
+
+def test_probe_memory_is_present_under_exact_discovery_too() -> None:
+    """The channel is unconditional so one policy fits both discovery conditions."""
+
+    env = deterministic_env()
+    observation, _ = env.reset(seed=1)
+
+    assert observation["probed_hosts"].tolist() == [0, 0]
+    assert env.observation_space.contains(observation)

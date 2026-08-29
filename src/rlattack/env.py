@@ -116,6 +116,12 @@ class DynamicsConfig:
     because reaching its objective takes more steps - which shows up in a transfer
     table as a generalization failure that is really a calibration artifact.
 
+    The agent observes ``probed_hosts``: which hosts it has probed and missed since its
+    last new vantage point. That is its own memory of its own actions, not privileged
+    knowledge, and without it a policy cannot tell "I have probed everything once" from
+    "I have not probed at all" - the distinction lives only in the action mask, which a
+    maskable learner uses to filter its action distribution rather than as an input.
+
     ``noisy_discovery`` turns neighbour discovery into a scan. With exact adjacency the
     action mask itself reveals the topology: it offers ``discover_host`` for precisely
     the hosts that are genuinely adjacent, so the agent reads the graph instead of
@@ -332,6 +338,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "acquired_credentials": spaces.MultiBinary(self._credential_width),
             "acquired_privileges": spaces.MultiBinary(self._privilege_width),
             "collected_objectives": spaces.MultiBinary(self._objective_width),
+            "probed_hosts": spaces.MultiBinary(self._host_width),
             "alert_level": spaces.MultiBinary(config.alert_levels),
             "budget_fraction": spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
         }
@@ -895,6 +902,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "acquired_credentials": self._acquired_credentials.copy(),
             "acquired_privileges": self._acquired_privileges.copy(),
             "collected_objectives": self._collected_objectives.copy(),
+            "probed_hosts": self._failed_discovery.copy(),
             "alert_level": alert,
             "budget_fraction": np.array(
                 [(self.step_budget - self._steps) / self.step_budget], dtype=np.float32
