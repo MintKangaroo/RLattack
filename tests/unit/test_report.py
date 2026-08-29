@@ -61,3 +61,18 @@ def test_transfer_report_is_written_to_disk(tmp_path: Path) -> None:
 
     assert output.exists()
     assert output.name == "transfer.html"
+
+
+def test_report_declares_responsive_rules_for_narrow_viewports() -> None:
+    """Long condition labels and the CI column overflowed a 320px viewport.
+
+    A browser is not available in CI, so this guards the CSS rules that fixed it.
+    """
+
+    html = render_dashboard({"config": {}})
+
+    assert ".panel-head { display:flex" in html
+    assert "flex-wrap:wrap" in html
+    assert "white-space:normal" in html
+    assert "@media (max-width:720px)" in html
+    assert ".wide-only { display:none }" in html

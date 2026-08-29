@@ -11,14 +11,17 @@ from typing import cast
 
 from rlattack import __version__
 from rlattack.agents import Agent
+from rlattack.conditions import CONTROL_LABEL, run_condition_sweep
 from rlattack.curriculum import (
     DEFAULT_CURRICULUM,
     CurriculumStage,
     StageEnv,
     evaluate_transfer,
+    scale_curriculum,
     stage_env_factory,
 )
 from rlattack.dashboard import run_dashboard
+from rlattack.defender import BanditDefender
 from rlattack.env import AttackPathEnv, ObservationConfig
 from rlattack.evaluation import BenchmarkMetrics
 from rlattack.experiment import (
@@ -35,11 +38,13 @@ from rlattack.experiment import (
     run_reward_ablation,
 )
 from rlattack.export import write_results
+from rlattack.game import play
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.policies import Algorithm, load_policy
 from rlattack.report import write_dashboard_report, write_transfer_report
 from rlattack.reward import RewardStrategy
 from rlattack.stats import compare_benchmarks
+from rlattack.sweep import trials_by_label
 from rlattack.training import (
     DQNTrainingConfig,
     PPOTrainingConfig,
@@ -220,6 +225,52 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_significance_arguments(transfer, default_reference="small/easy")
 
+    conditions = commands.add_parser(
+        "conditions",
+        help="evaluate one policy across the defender x discovery condition grid",
+    )
+    _add_experiment_arguments(conditions)
+    conditions.add_argument(
+        "--policy",
+        type=Path,
+        help="optional local Stable-Baselines3 checkpoint; defaults to the --agent baseline",
+    )
+    conditions.add_argument(
+        "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
+    )
+    conditions.add_argument("--output", type=Path, default=Path("artifacts/conditions.jsonl"))
+    conditions.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    _add_significance_arguments(conditions, default_reference=CONTROL_LABEL)
+
+    game = commands.add_parser(
+        "game",
+        help="play a fixed attacker against a defender that adapts between episodes",
+    )
+    _add_experiment_arguments(game)
+    game.add_argument(
+        "--policy",
+        type=Path,
+        help="optional local Stable-Baselines3 checkpoint; defaults to the --agent baseline",
+    )
+    game.add_argument(
+        "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
+    )
+    game.add_argument("--rounds", type=int, default=200, help="episodes the defender learns over")
+    game.add_argument("--exploration", type=float, default=0.15)
+    game.add_argument("--output", type=Path, default=Path("artifacts/game.jsonl"))
+
+    sweep = commands.add_parser(
+        "sweep",
+        help="train several hyperparameter trials and benchmark each resulting policy",
+    )
+    _add_experiment_arguments(sweep)
+    sweep.add_argument("--trials", nargs="+", help="trial labels to run (default: all)")
+    sweep.add_argument("--curriculum-timesteps", type=int, default=40_000)
+    sweep.add_argument("--output-dir", type=Path, default=Path("artifacts/sweep"))
+    sweep.add_argument("--output", type=Path, default=Path("artifacts/sweep.jsonl"))
+    sweep.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    _add_significance_arguments(sweep, default_reference="baseline")
+
     train = commands.add_parser(
         "train", help="train an optional Stable-Baselines3 policy on generated scenarios"
     )
@@ -245,6 +296,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--curriculum",
         action="store_true",
         help="train one policy across the staged scenario curriculum",
+    )
+    train.add_argument(
+        "--curriculum-timesteps",
+        type=int,
+        help="total curriculum budget, split across stages in their default proportions",
     )
     return parser
 
@@ -272,7 +328,7 @@ def _run_benchmark(args: argparse.Namespace) -> int:
     extra: dict[str, Callable[[int], Agent]] = {}
     if args.policy is not None:
         policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
-        extra[args.policy_algorithm] = lambda seed: policy
+        extra[args.policy_algorithm] = _constant_agent(policy)
     metrics = run_benchmarks(config, extra)
     output = write_results(metrics, args.output, args.format)
     print("RLAttack generalization benchmark")
@@ -436,6 +492,128 @@ def _run_transfer(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_conditions(args: argparse.Namespace) -> int:
+    """Evaluate one policy across the defender x discovery grid."""
+
+    config = _config_from_args(args)
+    agent_factory, label = _agent_factory_from_args(args, config)
+    metrics = run_condition_sweep(config, agent_factory)
+    output = write_results(metrics, args.output, args.format)
+    print("RLAttack condition sweep")
+    print(f"  policy    : {label}")
+    print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
+    for name, metric in metrics.items():
+        print(
+            f"  {name:<17} success={metric.success_rate:5.1%} "
+            f"detected={metric.detection_rate:5.1%} "
+            f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
+            f"reward={metric.mean_reward:7.2f}"
+        )
+    _print_comparisons(metrics, args)
+    print(f"  export    : {output}")
+    return 0
+
+
+def _constant_agent(agent: Agent) -> Callable[[int], Agent]:
+    """Wrap one already-built agent as the seed-indexed factory evaluators expect."""
+
+    def build(seed: int) -> Agent:
+        del seed
+        return agent
+
+    return build
+
+
+def _agent_factory_from_args(
+    args: argparse.Namespace, config: ExperimentConfig
+) -> tuple[Callable[[int], Agent], str]:
+    """Build the attacker factory shared by the evaluation commands."""
+
+    if args.policy is not None:
+        policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
+        return _constant_agent(policy), str(args.policy_algorithm)
+
+    def from_baseline(seed: int) -> Agent:
+        return create_agent(
+            config.agent,
+            generate_scenario(config.size, config.difficulty, seed),
+            seed=seed,
+        )
+
+    return from_baseline, config.agent
+
+
+def _run_game(args: argparse.Namespace) -> int:
+    """Play a fixed attacker against a defender that adapts between episodes."""
+
+    config = _config_from_args(args)
+    agent_factory, label = _agent_factory_from_args(args, config)
+    result = play(
+        config,
+        agent_factory,
+        BanditDefender(exploration=args.exploration),
+        episodes=args.rounds,
+        seed=config.seed,
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(
+        "".join(
+            f"{json.dumps({'episode': index, **asdict(outcome)}, ensure_ascii=False)}\n"
+            for index, outcome in enumerate(result.outcomes)
+        ),
+        encoding="utf-8",
+    )
+    print("RLAttack attacker vs adaptive defender")
+    print(f"  attacker  : {label}")
+    print(f"  scenarios : {config.size}/{config.difficulty} x {result.episodes} rounds")
+    print(f"  attacker success : {result.attacker_success_rate:5.1%}")
+    print(f"  detected         : {result.detection_rate:5.1%}")
+    print(f"  defender reward  : {result.mean_defender_reward:.3f}")
+    print(f"  settled on       : {result.preferred_arm}")
+    for arm, pulls in result.pulls.items():
+        print(f"  {arm:<16} pulls={pulls:4}  value={result.values[arm]:.3f}")
+    print(f"  export    : {args.output.resolve()}")
+    return 0
+
+
+def _run_sweep(args: argparse.Namespace) -> int:
+    """Train each hyperparameter trial and benchmark the resulting policies."""
+
+    if not training_dependencies_available():
+        print("Sweeping requires the optional dependencies: pip install -e '.[training]'")
+        return 1
+    config = _config_from_args(args)
+    trials = trials_by_label(tuple(args.trials) if args.trials else None)
+    stages = scale_curriculum(DEFAULT_CURRICULUM, args.curriculum_timesteps)
+    observation_config = ObservationConfig.for_curriculum()
+    metrics: dict[str, BenchmarkMetrics] = {}
+    for trial in trials:
+        training_config = trial.config(seed=config.seed, output_dir=args.output_dir)
+        print(f"training trial '{trial.label}' ({args.curriculum_timesteps} timesteps)")
+        train_curriculum(
+            [_stage_env_builder(stage, config.step_budget, observation_config) for stage in stages],
+            [stage.timesteps for stage in stages],
+            training_config,
+            algorithm="maskable-ppo",
+        )
+        policy = load_policy(training_config.output_dir / "final", "maskable-ppo")
+        factory = _constant_agent(policy)
+        metrics[trial.label] = run_benchmarks(config, {trial.label: factory})[trial.label]
+    output = write_results(metrics, args.output, args.format)
+    print("RLAttack hyperparameter sweep")
+    print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
+    for name, metric in metrics.items():
+        print(
+            f"  {name:<14} success={metric.success_rate:5.1%} "
+            f"detected={metric.detection_rate:5.1%} "
+            f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
+            f"reward={metric.mean_reward:7.2f}"
+        )
+    _print_comparisons(metrics, args)
+    print(f"  export    : {output}")
+    return 0
+
+
 def _run_training(args: argparse.Namespace) -> int:
     """Train one optional Stable-Baselines3 policy on generated scenarios."""
 
@@ -462,7 +640,11 @@ def _run_training(args: argparse.Namespace) -> int:
         )
 
     if args.curriculum:
-        stages = DEFAULT_CURRICULUM
+        stages = (
+            scale_curriculum(DEFAULT_CURRICULUM, args.curriculum_timesteps)
+            if args.curriculum_timesteps
+            else DEFAULT_CURRICULUM
+        )
         train_curriculum(
             [_stage_env_builder(stage, args.step_budget, observation_config) for stage in stages],
             [stage.timesteps for stage in stages],
@@ -526,6 +708,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_ablation(args)
     if args.command == "transfer":
         return _run_transfer(args)
+    if args.command == "conditions":
+        return _run_conditions(args)
+    if args.command == "game":
+        return _run_game(args)
+    if args.command == "sweep":
+        return _run_sweep(args)
     if args.command == "train":
         return _run_training(args)
 

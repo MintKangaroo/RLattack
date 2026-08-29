@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rlattack"
-version = "0.5.0"
+version = "0.6.0"
 description = "A deterministic simulation observatory for reinforcement-learning attack paths."
 readme = "README.md"
 requires-python = ">=3.10"

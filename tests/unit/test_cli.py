@@ -7,8 +7,10 @@ import numpy as np
 import pytest
 
 from rlattack import cli
+from rlattack.agents import GreedyAgent
 from rlattack.curriculum import DEFAULT_CURRICULUM, StageEnv
 from rlattack.env import Action, AttackPathEnv
+from rlattack.training import PPOTrainingConfig
 
 
 def test_cli_prints_help_without_command(capsys: pytest.CaptureFixture[str]) -> None:
@@ -502,3 +504,164 @@ def test_cli_masked_training_requires_the_curriculum(
 
     assert cli.main(["train", "--algorithm", "maskable-ppo", "--size", "small"]) == 1
     assert "--curriculum" in capsys.readouterr().out
+
+
+def test_cli_conditions_sweeps_the_treatment_grid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "conditions.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "conditions",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--agent",
+                "greedy",
+                "--episodes",
+                "4",
+                "--resamples",
+                "100",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert "RLAttack condition sweep" in printed
+    assert "adaptive/noisy" in printed
+    assert "paired vs passive/exact" in printed
+    assert {row["agent"] for row in rows} == {
+        "passive/exact",
+        "adaptive/exact",
+        "passive/noisy",
+        "adaptive/noisy",
+    }
+
+
+def test_cli_conditions_accepts_a_trained_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class StubAgent:
+        def predict(self, observation: object, info: dict[str, object]) -> np.int64:
+            return np.int64(int(Action.STOP) * int(cast(int, info["target_count"])))
+
+    monkeypatch.setattr(cli, "load_policy", lambda path, algorithm: StubAgent())
+
+    assert (
+        cli.main(
+            [
+                "conditions",
+                "--size",
+                "small",
+                "--episodes",
+                "2",
+                "--resamples",
+                "100",
+                "--policy",
+                str(tmp_path / "model.zip"),
+                "--output",
+                str(tmp_path / "c.jsonl"),
+            ]
+        )
+        == 0
+    )
+
+    assert "policy    : maskable-ppo" in capsys.readouterr().out
+
+
+def test_cli_game_reports_the_defenders_learned_preference(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "game.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "game",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--agent",
+                "greedy",
+                "--rounds",
+                "10",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert "attacker vs adaptive defender" in printed
+    assert "settled on" in printed
+    assert len(rows) == 10
+    assert rows[0]["episode"] == 0
+
+
+def test_cli_sweep_reports_missing_optional_dependencies(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: False)
+
+    assert cli.main(["sweep"]) == 1
+    assert "optional dependencies" in capsys.readouterr().out
+
+
+def test_cli_sweep_trains_and_benchmarks_each_trial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    trained: list[float] = []
+
+    def fake_train(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        trained.append(cast(PPOTrainingConfig, config).learning_rate)
+        assert algorithm == "maskable-ppo"
+
+    monkeypatch.setattr(cli, "train_curriculum", fake_train)
+    monkeypatch.setattr(cli, "load_policy", lambda path, algorithm: GreedyAgent())
+    output = tmp_path / "sweep.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "sweep",
+                "--trials",
+                "baseline",
+                "fast-lr",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--episodes",
+                "3",
+                "--curriculum-timesteps",
+                "8",
+                "--resamples",
+                "100",
+                "--output-dir",
+                str(tmp_path / "runs"),
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert trained == [3e-4, 1e-3]
+    assert "hyperparameter sweep" in printed
+    assert "paired vs baseline" in printed
+    assert {row["agent"] for row in rows} == {"baseline", "fast-lr"}

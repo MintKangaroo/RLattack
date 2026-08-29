@@ -63,6 +63,31 @@ DEFAULT_CURRICULUM: tuple[CurriculumStage, ...] = (
     CurriculumStage("medium", "hard", 30_000),
 )
 
+
+def scale_curriculum(
+    stages: Sequence[CurriculumStage], total_timesteps: int
+) -> tuple[CurriculumStage, ...]:
+    """Rescale a curriculum to a total budget, keeping each stage's share.
+
+    Training budget is the first thing to vary when a published policy is a floor
+    rather than a ceiling, so it is a parameter rather than a constant.
+    """
+
+    if not stages:
+        raise ValueError("at least one curriculum stage is required")
+    if total_timesteps < len(stages):
+        raise ValueError("total_timesteps must leave at least one step per stage")
+    budget = sum(stage.timesteps for stage in stages)
+    return tuple(
+        CurriculumStage(
+            stage.size,
+            stage.difficulty,
+            max(1, round(total_timesteps * stage.timesteps / budget)),
+        )
+        for stage in stages
+    )
+
+
 HELD_OUT_STAGES: tuple[CurriculumStage, ...] = (
     CurriculumStage("large", "medium"),
     CurriculumStage("large", "hard"),

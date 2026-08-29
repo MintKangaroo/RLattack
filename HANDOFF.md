@@ -1,85 +1,55 @@
 # RLAttack 인수인계
 
-> 다음 세션 시작점: 2026-08-29 기준 v0.5.0 작업본
+> 다음 세션 시작점: 2026-08-29 기준 v0.6.0 작업본
 
 ## 현재 상태
 
-- Package version: `0.5.0`
-- 작업 브랜치: `feat/v050-defender-latency` (PR #8 → #9 → 이 브랜치 순으로 쌓여 있습니다)
+- Package version: `0.6.0`
+- 작업 브랜치: `feat/v060-sweep-and-conditions` (PR #8 → #9 → #10 → 이 브랜치 순으로 스택)
 - 원격 저장소: <https://github.com/MintKangaroo/RLattack>
 - 실행 경계: synthetic graph와 in-process state transition만 허용
-- 품질 기준: Ruff, strict mypy, 175 tests, package coverage 100%
+- 품질 기준: Ruff, strict mypy, 204 tests, package coverage 100%
 
 ## 이전 릴리스 요약
 
 - **v0.3 (PR #8)** — RL 문제를 non-degenerate하게: targeted action space, seed별
-  scenario를 만드는 generalization benchmark, 재현 가능한 확률적 dynamics,
-  discover/pivot 분리, 학습 policy 평가 경로, 분산·신뢰구간 보고.
-- **v0.4 (PR #9)** — 실험 프로토콜: 부분 관측(양자화 alert level, 크기를 숨기는 고정
-  capacity), 능동적 defender, 다목적 episode, paired 유의성 검정, curriculum과 전이 평가.
-  ⚠️ v0.4에서 보고한 전이 표는 아래 5번 버그의 영향을 받았습니다. v0.5의 수치를 쓰세요.
+  scenario를 만드는 generalization benchmark, 재현 가능한 확률적 dynamics.
+- **v0.4 (PR #9)** — 실험 프로토콜: 부분 관측, 능동적 defender, 다목적 episode,
+  paired 유의성 검정, curriculum과 전이 평가. ⚠️ 이 PR의 전이 표는 v0.5에서 고친
+  baseline 버그의 영향을 받았습니다.
+- **v0.5 (PR #10)** — action masking 학습(이것 없이는 정책이 즉시 `stop`으로 퇴화),
+  defender 반응 지연·노이즈, noisy discovery, 학습 정책 결과 공개.
 
-## v0.5에서 바뀐 것
+## v0.6에서 바뀐 것
 
-1. **Action masking 학습** (`maskable-ppo`, `sb3-contrib`). 이것이 v0.5의 핵심입니다.
-   각 상태에서 유효한 action은 전체의 1~2%(small scenario reset 시 288개 중 4개)뿐이라,
-   masking 없이 학습한 PPO 100k step curriculum은 **퇴화 정책**으로 수렴했습니다 —
-   3개 action 후 `stop`, 9개 scenario class 전부에서 동일한 4-step episode, 성공률 0%.
-   Environment가 이미 mask를 노출하고 있었으므로, 학습이 그것을 쓰도록 바꿨습니다.
-2. **Defender 반응 지연과 노이즈** — 이전에는 공격자의 정확한 risk를 읽고 임계값을 넘는
-   순간 반응했습니다. 이제 노이즈 섞인 추정치를 읽고 `response_latency` step 뒤에 효과가
-   발생합니다. 오탐 횟수는 `info`에 집계합니다.
-3. **Noisy discovery** — exact adjacency에서는 action mask 자체가 토폴로지였습니다
-   (인접한 host에만 `discover_host`를 제공). 이제 모든 미발견 host를 probe할 수 있고
-   인접한 것만 확률적으로 성공합니다.
-4. **리포트 뷰** — condition strip(dynamics/defender/discovery/observation),
-   defender 타일, `transfer --report`로 만드는 self-contained 전이 표.
-5. **전이 baseline 버그 수정** — `evaluate_transfer`가 seed만 받는 factory를 썼고 CLI가
-   **설정된** size/difficulty로 baseline을 만들었습니다. 즉 `ShortestPathOracle`이 한
-   scenario class로 만들어져 나머지 8개 class에서 실행됐고, route와 index가 다른 graph의
-   것이었습니다. Greedy fallback 덕에 동작은 해서 표가 그럴듯해 보였을 뿐입니다.
-   수정 후 oracle은 9개 class 전부에서 83~100%입니다(이전 large 18~38%).
-   **v0.4에서 "실제 일반화 격차"라고 한 것은 대부분 이 버그였습니다.**
+1. **조건 격자 평가** (`rlattack conditions`) — 공개 정책을 대조 조건에서만 보고하고
+   있었습니다. 결과가 중요합니다: curriculum 정책은 adaptive defender에는 영향을 받지
+   않지만(p=0.29) **noisy discovery에서 성공률 0%**입니다. Exact adjacency로 학습해
+   probe하는 법을 배우지 못했기 때문입니다. Oracle은 같은 격자에서 우아하게
+   저하됩니다(96.9 → 68.8 → 46.9%) — 다만 이는 특권적 경로 지식 덕분이지 성취가 아닙니다.
+2. **학습하는 defender** (`rlattack game`) — `BanditDefender`가 에피소드마다 대응 정책을
+   고르고 결과로 갱신합니다. Oracle 상대 200 rounds에서 한 arm으로 수렴해 공격자를
+   92.0%로 억제(최악 고정 arm 96.5%). 사후에 고른 최선 고정 arm(91.5%)은 못 이기며,
+   그 차이가 탐색 비용입니다.
+3. **Sweep 인프라** (`rlattack sweep`) — learning rate·rollout·entropy를 명시적 knob로
+   만들고, trial마다 학습·벤치마크 후 baseline 대비 유의성 검정을 붙입니다.
+4. **400k 정책 공개** — oracle 대비 마진이 +1.04(p=0.030) → **+2.71(p=0.0005)**,
+   탐지율 3.1% → **0.0%**. 100k가 하한선이었음을 보여줍니다.
+5. **스크린샷 재촬영** — 이 환경에 chromium을 `--with-deps` 없이 설치할 수 있었습니다.
+   재촬영 과정에서 반응형 결함 2건을 발견해 고쳤습니다(모바일 benchmark 행 3줄 깨짐,
+   320px에서 41px 가로 넘침). 320~1920px 전 구간 가로 넘침 0을 확인했고, CI에는
+   브라우저가 없으므로 CSS 규칙을 단위 테스트로 고정했습니다.
 
-### 전이 표 (graph oracle, 24 seeds, passive defender, 수정 후)
-
-| Class | success | detected | mean steps |
-| --- | --- | --- | --- |
-| small/easy | 100.0% | 0.0% | 17.1 ± 3.0 |
-| small/medium | 100.0% | 0.0% | 14.7 ± 4.0 |
-| small/hard | 100.0% | 0.0% | 18.4 ± 3.3 |
-| medium/easy | 87.5% | 12.5% | 38.5 ± 3.4 |
-| medium/medium | 91.7% | 8.3% | 30.2 ± 6.1 |
-| medium/hard | 91.7% | 8.3% | 28.3 ± 4.9 |
-| large/easy | 83.3% | 16.7% | 82.2 ± 4.7 |
-| large/medium | 91.7% | 8.3% | 62.6 ± 7.3 |
-| large/hard | 100.0% | 0.0% | 55.5 ± 6.8 |
-
-Risk 정규화는 이 버그와 무관하게 여전히 필요합니다. 정규화를 끄면 수정된 oracle도
-`large/easy`에서 0%, large 전체 0~50%입니다.
-
-### 학습된 정책 재현
+### 스크린샷 재생성
 
 ```bash
-python -m pip install -e ".[dev,training]"
-rlattack train --algorithm maskable-ppo --curriculum --seed 42 \
-  --output-dir artifacts/policies/mppo
-rlattack transfer --policy artifacts/policies/mppo/final.zip \
-  --policy-algorithm maskable-ppo --observation curriculum \
-  --episodes 24 --output artifacts/transfer.jsonl --report artifacts/transfer.html
+python -m pip install playwright && python -m playwright install chromium
+rlattack demo --size medium --difficulty hard --seed 42 --agent shortest-path \
+  --defender adaptive --episodes 8 --report /tmp/dash.html
+# 이후 playwright로 docs/assets/*.png 촬영 (HANDOFF 이력의 스크립트 참조)
 ```
 
-Checkpoint는 저장소에 커밋하지 않습니다(`artifacts/`는 gitignore). 위 명령으로 재생성합니다.
-100k step curriculum은 하한선이지 상한선이 아닙니다.
-
-### 학습 결과 요약 (`docs/results.md`에 전체 표)
-
-- `medium/hard` 32 seeds: MaskablePPO가 oracle과 동일한 96.9% 성공·3.1% 탐지,
-  보상은 유의하게 높음(+1.04, p=0.030). 경로가 더 **짧아서**가 아니라 더 **조용해서**입니다
-  (31.7 vs 27.3 steps).
-- 전이: 학습한 class에서 87~100%, held-out `large`에서 58~83%로 oracle(83~100%) 대비
-  17~25점 뒤처집니다.
-- 마스킹 없는 PPO와 DQN은 **둘 다** 9개 class 전부에서 4-step·성공률 0%로 퇴화했습니다.
+`--with-deps`는 sudo가 필요해 실패합니다. 그냥 `install chromium`만 쓰면 됩니다.
 
 ## 다음 세션 시작 명령
 
@@ -97,24 +67,26 @@ make audit
 
 ```bash
 rlattack demo
-rlattack benchmark --size medium --difficulty hard --episodes 64 \
-  --output artifacts/benchmark.jsonl
+rlattack benchmark --size medium --difficulty hard --episodes 64
 rlattack ablation --agent greedy --episodes 32 --compare-to shaped
 rlattack transfer --episodes 32 --report artifacts/transfer.html
-rlattack train --algorithm maskable-ppo --curriculum      # .[training] 필요
+rlattack conditions --episodes 32 --policy artifacts/policies/mppo-400k/final.zip
+rlattack game --agent shortest-path --rounds 200
+rlattack sweep --curriculum-timesteps 40000        # .[training] 필요
+rlattack train --algorithm maskable-ppo --curriculum --curriculum-timesteps 400000
 rlattack dashboard
 ```
 
 Dashboard: <http://127.0.0.1:8000>
 
-## 다음 확장 후보 (v0.6)
+## 다음 확장 후보 (v0.7)
 
-`docs/roadmap.md`의 38–41번 항목입니다.
+`docs/roadmap.md`의 42–45번 항목입니다.
 
-1. 더 긴 학습 예산과 hyperparameter sweep (현재 공개 정책은 100k step)
-2. 브라우저가 있는 환경에서 dashboard/transfer 스크린샷 재촬영
-3. 학습된 정책을 adaptive defender·noisy discovery 조건에서도 평가
-4. 자신의 정책을 학습하는 defender (2인 게임으로 확장)
+1. **noisy discovery 조건에서 학습** — 현재 최대 약점입니다. 정책이 그 조건에서 0%입니다.
+2. 공격자도 에피소드 간 적응시켜 학습자 2명의 게임으로
+3. Bandit defender를 에피소드 진행 상황에 조건화된 정책으로 교체
+4. 공개된 attack-graph 데이터셋 importer (현재 결과는 이 generator 구조에 한정)
 
 확장 시에도 synthetic graph, in-process transition, loopback-only dashboard라는 안전
 경계를 유지합니다.
@@ -135,6 +107,8 @@ Dashboard: <http://127.0.0.1:8000>
   reward signal을 쓰지 않으므로 행동 차이는 학습된 policy에서만 나타납니다.
 - `StageEnv`는 reset마다 stage에서 새 scenario를 뽑습니다. SB3가 environment를 한 번만
   만들기 때문에, 그러지 않으면 stage가 class가 아니라 graph 하나를 가르칩니다.
+- 공개 정책은 **학습한 조건에서만 유효합니다**. `docs/results.md`의 조건 격자 표를
+  보지 않고 성능을 인용하지 마세요.
 - 학습에는 반드시 `maskable-ppo`를 씁니다. Masking 없는 `dqn`/`ppo`는 1~2%만 유효한
   action 공간에서 즉시 `stop`하는 정책으로 수렴합니다. 이는 v0.5에서 실제로 관측한
   결과이지 추측이 아닙니다.

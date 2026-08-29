@@ -102,6 +102,8 @@ _HTML_START = """<!doctype html>
       gap:10px; padding:14px; border:1px solid var(--line); border-radius:18px;
       background:#0a1512dd; box-shadow:var(--shadow); margin-bottom:14px;
     }
+    .wide-only { display:inline }
+    @media (max-width:720px) { .wide-only { display:none } }
     .conditions { display:flex; flex-wrap:wrap; gap:8px; margin:-8px 0 26px }
     .cond {
       display:inline-flex; gap:8px; align-items:center; padding:7px 12px; border-radius:999px;
@@ -133,10 +135,10 @@ _HTML_START = """<!doctype html>
     .stat small { color:#6f857d; font-size:11px }
     .main-grid { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(300px,.65fr); gap:14px; margin-bottom:14px }
     .panel { padding:21px; min-width:0 }
-    .panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:15px }
+    .panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:15px; flex-wrap:wrap }
     .panel h2 { margin:0; font-size:15px; letter-spacing:-.02em }
     .sub { margin-top:5px; color:var(--muted); font-size:11px }
-    .tag { border:1px solid var(--line); border-radius:999px; padding:6px 9px; color:#9ab0a8; font-size:9px; letter-spacing:.1em; text-transform:uppercase; white-space:nowrap }
+    .tag { border:1px solid var(--line); border-radius:999px; padding:6px 9px; color:#9ab0a8; font-size:9px; letter-spacing:.1em; text-transform:uppercase; white-space:nowrap  max-width:100%; white-space:normal }
     #graph { width:100%; height:430px; display:block; border-radius:12px; background:#08120f; border:1px solid #1a2c27 }
     .edge { stroke:#294039; stroke-width:1.6 }
     .edge.route { stroke:#50d991; stroke-width:2.3; stroke-dasharray:6 5 }
@@ -170,6 +172,13 @@ _HTML_START = """<!doctype html>
     .bar { height:7px; border-radius:99px; background:#172923; overflow:hidden }
     .bar i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--green-2),var(--green)); box-shadow:0 0 16px #56f39a55 }
     .bench-row strong { text-align:right; font-size:11px }
+    @media (max-width:720px) {
+      .bench-row { grid-template-columns:1fr auto; gap:6px 10px }
+      .bench-row .bar { grid-column:1 / -1; order:3 }
+      .bench-row strong { text-align:right }
+      .bench-row strong br { display:none }
+      .bench-row strong small { margin-left:8px }
+    }
     .legend { display:flex; gap:15px; color:#70867e; font-size:9px; margin-top:17px; padding-top:13px; border-top:1px solid #192b25 }
     .table-wrap { overflow:auto; max-height:365px }
     table { width:100%; border-collapse:collapse; min-width:680px }
@@ -364,7 +373,7 @@ _HTML_END = """
         `<li><b>${String(index+1).padStart(2,'0')}</b><span>${esc(node)}</span><small>${index===0?'ENTRY':index===s.oracle_route.length-1?'GOAL':'PIVOT'}</small></li>`
       ).join('');
       $('benchmarks').innerHTML=data.benchmarks.map(metric =>
-        `<div class="bench-row"><span>${esc(metric.label)}</span><div class="bar"><i style="width:${Math.max(1,metric.success_rate*100)}%"></i></div><strong>${pct(metric.success_rate)}<br><small>${num(metric.mean_steps,1)}±${num(metric.std_steps,1)} st · det ${pct(metric.detection_rate)} · R ${num(metric.mean_reward,1)} [${num(metric.reward_ci_low,1)}, ${num(metric.reward_ci_high,1)}]</small></strong></div>`
+        `<div class="bench-row"><span>${esc(metric.label)}</span><div class="bar"><i style="width:${Math.max(1,metric.success_rate*100)}%"></i></div><strong>${pct(metric.success_rate)}<br><small>${num(metric.mean_steps,1)}±${num(metric.std_steps,1)} st · det ${pct(metric.detection_rate)}<span class="wide-only"> · R ${num(metric.mean_reward,1)} [${num(metric.reward_ci_low,1)}, ${num(metric.reward_ci_high,1)}]</span></small></strong></div>`
       ).join('');
       $('trace').innerHTML=e.trace.map(row =>
         `<tr><td>${row.step}</td><td class="action">${esc(row.action)}</td><td class="action">${esc(row.target_id??'—')}</td><td>${row.state.discovered_hosts}H · ${row.state.known_services}S · ${row.state.acquired_privileges}P</td><td>${pct(row.detection_risk)}</td><td>${row.reward>=0?'+':''}${num(row.reward)}</td><td><span class="pill ${row.valid&&row.outcome!=='failed'?'':'invalid'}">${esc(row.outcome)}</span></td></tr>`

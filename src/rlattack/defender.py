@@ -113,3 +113,99 @@ def decide_response(
         index = int(rng.choice(np.asarray(state.acquired_credentials)))
         return DefenderResponse(harden=True, revoke_credential=index)
     return DefenderResponse(harden=True)
+
+
+@dataclass(frozen=True)
+class DefenderArm:
+    """One named defender configuration the adaptive defender can choose."""
+
+    label: str
+    config: DefenderConfig
+
+    def __post_init__(self) -> None:
+        if not self.label:
+            raise ValueError("a defender arm needs a label")
+        if not self.config.enabled:
+            raise ValueError("a defender arm must be enabled")
+
+
+DEFAULT_ARMS: tuple[DefenderArm, ...] = (
+    DefenderArm("patient", DefenderConfig(enabled=True, alert_threshold=0.35)),
+    DefenderArm("balanced", DefenderConfig(enabled=True, alert_threshold=0.2)),
+    DefenderArm(
+        "trigger-happy",
+        DefenderConfig(enabled=True, alert_threshold=0.08, response_cooldown=3),
+    ),
+    DefenderArm(
+        "revoke-heavy",
+        DefenderConfig(enabled=True, alert_threshold=0.2, revocation_probability=0.9),
+    ),
+    DefenderArm(
+        "fast",
+        DefenderConfig(enabled=True, alert_threshold=0.2, response_latency=0),
+    ),
+)
+
+
+@dataclass
+class BanditDefender:
+    """A defender that learns which response policy works against this attacker.
+
+    The fixed defender is a static opponent: an attacker only has to beat one setting.
+    This one picks an arm per episode and updates its estimate from the outcome, which
+    makes the setup a (deliberately simple) two-player game - the attacker policy is
+    held fixed within a run while the defender adapts between episodes.
+
+    Epsilon-greedy over a small arm set is the right level of machinery here: the
+    defender sees one scalar reward per episode, so there is nothing for a heavier
+    learner to exploit.
+    """
+
+    arms: tuple[DefenderArm, ...] = DEFAULT_ARMS
+    exploration: float = 0.15
+
+    def __post_init__(self) -> None:
+        if not self.arms:
+            raise ValueError("at least one defender arm is required")
+        if not 0.0 <= self.exploration <= 1.0:
+            raise ValueError("exploration must be in [0, 1]")
+        self.reset()
+
+    def reset(self, *, seed: int | None = None) -> None:
+        """Clear the learned estimates and restart the selection stream."""
+
+        self._rng = np.random.default_rng(seed)
+        self._pulls = [0] * len(self.arms)
+        self._values = [0.0] * len(self.arms)
+
+    @property
+    def pulls(self) -> dict[str, int]:
+        """Return how many episodes each arm was selected for."""
+
+        return {arm.label: count for arm, count in zip(self.arms, self._pulls, strict=True)}
+
+    @property
+    def values(self) -> dict[str, float]:
+        """Return the mean defender reward estimated for each arm."""
+
+        return {arm.label: value for arm, value in zip(self.arms, self._values, strict=True)}
+
+    def select(self) -> int:
+        """Choose an arm for the next episode."""
+
+        untried = [index for index, count in enumerate(self._pulls) if count == 0]
+        if untried:
+            return untried[0]
+        if self._rng.random() < self.exploration:
+            return int(self._rng.integers(len(self.arms)))
+        best = max(self._values)
+        return self._values.index(best)
+
+    def update(self, index: int, reward: float) -> None:
+        """Fold one episode's defender reward into that arm's running mean."""
+
+        if not 0 <= index < len(self.arms):
+            raise ValueError("arm index is outside the defender's arm set")
+        self._pulls[index] += 1
+        count = self._pulls[index]
+        self._values[index] += (reward - self._values[index]) / count
