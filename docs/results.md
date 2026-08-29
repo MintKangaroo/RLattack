@@ -184,6 +184,32 @@ fixing - but 6.2% against the oracle's 68.8% means **the gap is narrowed, not cl
 The observability fix was necessary and is not sufficient; the remaining distance is
 still exploration, and 400k steps does not cover it.
 
+## Held-out structural families
+
+The generator emits one shape: a chain with difficulty-dependent shortcuts. `rlattack
+families` evaluates on topologies it cannot produce, imported through the same sanitized
+path as an external attack graph. 8 hosts, 16 shared seeds, noisy discovery.
+
+| Family | Edges | Diameter | Graph oracle | Greedy |
+| --- | --- | --- | --- | --- |
+| chain *(in distribution)* | 10 | 5 | 56.2% | 37.5% |
+| star *(held out)* | 7 | 2 | **100.0%** | 75.0% |
+| tree *(held out)* | 6 | 4 | 93.8% | 68.8% |
+| mesh *(held out)* | 18 | 2 | **100.0%** | 81.2% |
+| ring *(held out)* | 8 | 4 | **12.5%** | 12.5% |
+
+Structure dominates the result. A star puts every host one hop from the hub, so probing
+almost always lands; a ring has no natural entry and its shortest path wraps, so the
+oracle's route knowledge buys it nothing and it scores 12.5% - worse than it does on the
+shape it was designed for. Every difference against the chain reference is significant.
+
+Two consequences for reading any other number in this document: a single success rate on
+the generator's own shape says little about a policy's competence, and the gap between
+the oracle and a learned policy should be read per family rather than in aggregate.
+
+Every family is solvable under deterministic dynamics, which a test asserts, so a low
+score is the agent's and not the topology's.
+
 ## Robustness to the experimental conditions
 
 `medium/hard`, 32 shared seeds, paired against the control condition.

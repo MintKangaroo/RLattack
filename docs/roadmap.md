@@ -97,18 +97,28 @@
     observe which hosts it had probed, and giving it that memory moved success from 0%
     to 6.2% - against the oracle's 68.8%, so the gap is narrowed, not closed)
 
+## v0.9 - held-out structure and strategic play
+
+51. Finish item 50 - close the remaining exploration gap under noisy discovery.
+52. Report whether a policy trained against a learning defender transfers better than
+    one trained against a fixed condition.
+53. Enrich the policy grid until the equilibrium is mixed. (**answered negatively**:
+    enriching it did not produce mixing, and the reason is that detection risk is a
+    single scalar penalizing all activity uniformly, so no attacker strategy trades off
+    against another - see item 55)
+54. A held-out scenario family the generator cannot produce. (completed: star, tree,
+    mesh, and ring topologies, which separate agents sharply - the graph oracle scores
+    100% on star and 12.5% on ring under noisy discovery)
+
 ## Next
 
-51. Finish item 50. The remaining distance is exploration, not observability: an
-    intrinsic novelty bonus, a shaped reward for a successful pivot rather than for
-    each discovery, or a budget well past 400k steps.
-52. Run an adversarial training study with `--adversarial` and report whether a policy
-    trained against a learning defender transfers better than one trained against a
-    fixed condition.
-53. Enrich the policy grid until the equilibrium is mixed; the current one has a
-    dominant attacker strategy, so it says little about strategic play.
-54. A held-out scenario family the generator cannot produce - imported topologies as a
-    test set rather than a demonstration.
+55. Give the defender targeted attention - per-host monitoring an attacker can route
+    around - so that evading one defender exposes you to another. Without it the policy
+    grid cannot have a mixed equilibrium, because doing less is always better.
+56. Report the family results for trained policies, not only baselines, and check
+    whether curriculum training on chains transfers to star, tree, mesh, and ring.
+57. Vary host count within a family, so structure and scale are separable rather than
+    confounded in one number.
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.
