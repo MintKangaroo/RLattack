@@ -24,7 +24,7 @@ from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.reward import RewardStrategy, build_reward_config
 from rlattack.scenario import Scenario
 
-AgentName = Literal["random", "greedy", "rule-based", "shortest-path"]
+AgentName = Literal["random", "greedy", "rule-based", "shortest-path", "shortest-path-broad"]
 ObservationMode = Literal["scenario", "curriculum"]
 DefenderMode = Literal["passive", "adaptive"]
 DiscoveryMode = Literal["exact", "noisy"]
@@ -45,6 +45,7 @@ AGENT_LABELS: dict[AgentName, str] = {
     "greedy": "Greedy",
     "rule-based": "Rule-based",
     "shortest-path": "Graph oracle",
+    "shortest-path-broad": "Graph oracle (redundant)",
 }
 
 
@@ -156,6 +157,8 @@ def create_agent(name: AgentName, scenario: Scenario, *, seed: int) -> Agent:
         return RuleBasedAgent()
     if name == "shortest-path":
         return ShortestPathOracle(scenario)
+    if name == "shortest-path-broad":
+        return ShortestPathOracle(scenario, redundant=True)
     raise ValueError(f"unsupported baseline agent: {name}")
 
 

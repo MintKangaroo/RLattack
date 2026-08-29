@@ -71,7 +71,7 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--agent",
-        choices=("random", "greedy", "rule-based", "shortest-path"),
+        choices=("random", "greedy", "rule-based", "shortest-path", "shortest-path-broad"),
         default="greedy",
     )
     parser.add_argument(

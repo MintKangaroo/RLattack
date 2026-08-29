@@ -118,10 +118,11 @@ def test_the_defender_prefers_an_arm_that_stops_the_attacker() -> None:
     def oracle_factory(seed: int) -> Agent:
         return ShortestPathOracle(generate_scenario(config.size, config.difficulty, seed))
 
-    result = play(config, oracle_factory, BanditDefender(exploration=0.1), episodes=60, seed=1)
+    rounds = 20 * len(DEFAULT_ARMS)
+    result = play(config, oracle_factory, BanditDefender(exploration=0.1), episodes=rounds, seed=1)
     settled = result.pulls[result.preferred_arm]
 
-    assert settled > 60 // len(DEFAULT_ARMS), "the defender must exploit, not just explore"
+    assert settled > rounds // len(DEFAULT_ARMS), "the defender must exploit, not just explore"
 
 
 def test_a_game_needs_at_least_one_round() -> None:

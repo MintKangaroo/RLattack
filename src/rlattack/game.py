@@ -15,7 +15,13 @@ from rlattack.experiment import AgentName, ExperimentConfig, create_agent
 from rlattack.generator import generate_scenario
 from rlattack.reward import build_reward_config
 
-ATTACKER_ARMS: tuple[AgentName, ...] = ("random", "greedy", "rule-based", "shortest-path")
+ATTACKER_ARMS: tuple[AgentName, ...] = (
+    "random",
+    "greedy",
+    "rule-based",
+    "shortest-path",
+    "shortest-path-broad",
+)
 
 
 @dataclass

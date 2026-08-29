@@ -114,8 +114,14 @@ def test_cli_benchmark_exports_episode_records(
     )
     rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
 
-    assert len(rows) == 12
-    assert {row["agent"] for row in rows} == {"random", "greedy", "rule-based", "shortest-path"}
+    assert len(rows) == 15
+    assert {row["agent"] for row in rows} == {
+        "random",
+        "greedy",
+        "rule-based",
+        "shortest-path",
+        "shortest-path-broad",
+    }
     assert "generalization benchmark" in capsys.readouterr().out
 
 
@@ -901,8 +907,8 @@ def test_cli_equilibrium_solves_the_policy_grid(
 
     assert "attacker x defender equilibrium" in printed
     assert "value     :" in printed
-    assert len(solved["payoffs"]) == 4
-    assert len(solved["payoffs"][0]) == 5
+    assert len(solved["payoffs"]) == 5
+    assert len(solved["payoffs"][0]) == 7
     assert sum(solved["attacker_mixture"]) == pytest.approx(1.0)
 
 

@@ -154,6 +154,29 @@ DEFAULT_ARMS: tuple[DefenderArm, ...] = (
         "fast",
         DefenderConfig(enabled=True, alert_threshold=0.2, response_latency=0),
     ),
+    # The two arms below specialize, so that attackers with different weaknesses are
+    # punished by different defenders. Without that, one attacker dominates the grid and
+    # the equilibrium is trivially pure.
+    DefenderArm(
+        "harden-only",
+        DefenderConfig(
+            enabled=True,
+            alert_threshold=0.12,
+            hardening_step=1.4,
+            revocation_probability=0.0,
+            response_cooldown=2,
+        ),
+    ),
+    DefenderArm(
+        "revoke-only",
+        DefenderConfig(
+            enabled=True,
+            alert_threshold=0.2,
+            hardening_step=0.0,
+            revocation_probability=1.0,
+            response_cooldown=2,
+        ),
+    ),
 )
 
 
