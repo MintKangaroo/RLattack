@@ -7,12 +7,68 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from rlattack.agents import Agent
+from rlattack.bandit import EpsilonGreedy
 from rlattack.defender import BanditDefender, ContextualDefender, DefenderConfig
 from rlattack.env import AttackPathEnv
 from rlattack.evaluation import EpisodeOutcome, run_episode_outcome
-from rlattack.experiment import ExperimentConfig
+from rlattack.experiment import AgentName, ExperimentConfig, create_agent
 from rlattack.generator import generate_scenario
 from rlattack.reward import build_reward_config
+
+ATTACKER_ARMS: tuple[AgentName, ...] = ("random", "greedy", "rule-based", "shortest-path")
+
+
+@dataclass
+class BanditAttacker:
+    """An attacker that learns which baseline works against the current defender.
+
+    With a fixed attacker only the defender adapts, so the run measures one side
+    learning against a stationary opponent. Letting the attacker pick a policy per
+    episode and learn from the outcome makes both sides non-stationary for each other.
+    """
+
+    arms: tuple[AgentName, ...] = ATTACKER_ARMS
+    exploration: float = 0.15
+
+    def __post_init__(self) -> None:
+        if not self.arms:
+            raise ValueError("at least one attacker arm is required")
+        self._learner = EpsilonGreedy(list(self.arms), exploration=self.exploration)
+
+    def reset(self, *, seed: int | None = None) -> None:
+        """Clear the learned estimates and restart the selection stream."""
+
+        self._learner.reset(seed=seed)
+
+    @property
+    def pulls(self) -> dict[str, int]:
+        """Return how many episodes each policy was selected for."""
+
+        return self._learner.pulls
+
+    @property
+    def values(self) -> dict[str, float]:
+        """Return the mean attacker reward estimated for each policy."""
+
+        return self._learner.values
+
+    def select(self) -> int:
+        """Choose a policy for the next episode."""
+
+        return self._learner.select()
+
+    def update(self, index: int, reward: float) -> None:
+        """Fold one episode's attacker reward into that policy's running mean."""
+
+        self._learner.update(index, reward)
+
+
+def attacker_reward(outcome: EpisodeOutcome) -> float:
+    """Score one episode from the attacker's side: the mirror of the defender's."""
+
+    if outcome.success:
+        return 1.0
+    return 0.0 if outcome.detected else 0.5
 
 
 @dataclass(frozen=True)
@@ -25,6 +81,8 @@ class GameResult:
     mean_defender_reward: float
     pulls: dict[str, int] = field(default_factory=dict)
     values: dict[str, float] = field(default_factory=dict)
+    attacker_pulls: dict[str, int] = field(default_factory=dict)
+    attacker_values: dict[str, float] = field(default_factory=dict)
     outcomes: tuple[EpisodeOutcome, ...] = ()
 
     @property
@@ -70,6 +128,7 @@ def play(
     agent_factory: Callable[[int], Agent],
     defender: BanditDefender | ContextualDefender | None = None,
     *,
+    attacker: BanditAttacker | None = None,
     episodes: int = 200,
     seed: int = 0,
 ) -> GameResult:
@@ -83,6 +142,8 @@ def play(
         raise ValueError("episodes must be positive")
     opponent = defender or BanditDefender()
     opponent.reset(seed=seed)
+    if attacker is not None:
+        attacker.reset(seed=seed + 1)
     reward_config = build_reward_config(config.reward_strategy)
     observation_config = config.observation_config()
     dynamics = config.dynamics()
@@ -110,7 +171,19 @@ def play(
             defender=arm,
             defender_policy=policy,
         )
-        outcome = run_episode_outcome(agent_factory(episode_seed), env, episode_seed)
+        attacker_arm = attacker.select() if attacker is not None else 0
+        agent = (
+            create_agent(
+                attacker.arms[attacker_arm],
+                generate_scenario(config.size, config.difficulty, episode_seed),
+                seed=episode_seed,
+            )
+            if attacker is not None
+            else agent_factory(episode_seed)
+        )
+        outcome = run_episode_outcome(agent, env, episode_seed)
+        if attacker is not None:
+            attacker.update(attacker_arm, attacker_reward(outcome))
         reward = defender_reward(outcome)
         if isinstance(opponent, ContextualDefender):
             opponent.finish_episode(reward)
@@ -132,5 +205,7 @@ def play(
         mean_defender_reward=sum(rewards) / episodes,
         pulls=pulls,
         values=values,
+        attacker_pulls=attacker.pulls if attacker is not None else {},
+        attacker_values=attacker.values if attacker is not None else {},
         outcomes=tuple(outcomes),
     )

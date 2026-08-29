@@ -744,3 +744,30 @@ def test_cli_can_import_topology_only(tmp_path: Path) -> None:
 
     assert imported["id"] == "custom-id"
     assert imported["services"] == []
+
+
+def test_cli_game_can_let_the_attacker_learn_too(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        cli.main(
+            [
+                "game",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--attacker",
+                "bandit",
+                "--rounds",
+                "8",
+                "--output",
+                str(tmp_path / "game.jsonl"),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+
+    assert "attacker  : bandit over baselines" in printed
+    assert "attacker shortest-path" in printed

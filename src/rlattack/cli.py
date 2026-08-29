@@ -38,7 +38,7 @@ from rlattack.experiment import (
     run_reward_ablation,
 )
 from rlattack.export import write_results
-from rlattack.game import play
+from rlattack.game import BanditAttacker, play
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.importers import import_scenario_file
 from rlattack.policies import Algorithm, load_policy
@@ -270,6 +270,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
     )
     game.add_argument("--rounds", type=int, default=200, help="episodes the defender learns over")
+    game.add_argument(
+        "--attacker",
+        choices=("fixed", "bandit"),
+        default="fixed",
+        help="hold the attacker fixed, or let it learn which policy beats this defender",
+    )
     game.add_argument(
         "--defender-policy",
         choices=("bandit", "contextual"),
@@ -596,7 +602,15 @@ def _run_game(args: argparse.Namespace) -> int:
         if args.defender_policy == "contextual"
         else BanditDefender(exploration=args.exploration)
     )
-    result = play(config, agent_factory, opponent, episodes=args.rounds, seed=config.seed)
+    attacker = BanditAttacker(exploration=args.exploration) if args.attacker == "bandit" else None
+    result = play(
+        config,
+        agent_factory,
+        opponent,
+        attacker=attacker,
+        episodes=args.rounds,
+        seed=config.seed,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         "".join(
@@ -606,7 +620,7 @@ def _run_game(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     print("RLAttack attacker vs adaptive defender")
-    print(f"  attacker  : {label}")
+    print(f"  attacker  : {'bandit over baselines' if attacker is not None else label}")
     print(f"  scenarios : {config.size}/{config.difficulty} x {result.episodes} rounds")
     print(f"  attacker success : {result.attacker_success_rate:5.1%}")
     print(f"  detected         : {result.detection_rate:5.1%}")
@@ -616,6 +630,10 @@ def _run_game(args: argparse.Namespace) -> int:
         print(f"  settled on       : {result.preferred_arm}")
         for arm, pulls in result.pulls.items():
             print(f"  {arm:<16} pulls={pulls:4}  value={result.values[arm]:.3f}")
+    for policy, pulls in result.attacker_pulls.items():
+        print(
+            f"  attacker {policy:<14} pulls={pulls:4}  value={result.attacker_values[policy]:.3f}"
+        )
     print(f"  export    : {args.output.resolve()}")
     return 0
 

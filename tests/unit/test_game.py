@@ -12,7 +12,13 @@ from rlattack.defender import (
 )
 from rlattack.evaluation import EpisodeOutcome
 from rlattack.experiment import ExperimentConfig
-from rlattack.game import GameResult, defender_reward, play
+from rlattack.game import (
+    BanditAttacker,
+    GameResult,
+    attacker_reward,
+    defender_reward,
+    play,
+)
 from rlattack.generator import generate_scenario
 
 
@@ -217,3 +223,45 @@ def test_the_contextual_defender_exploits_what_it_learned() -> None:
     defender.start_episode()
 
     assert defender.action_for(context) == "revoke"
+
+
+def test_attacker_reward_mirrors_the_defenders() -> None:
+    assert attacker_reward(outcome(success=True, detected=False)) == 1.0
+    assert attacker_reward(outcome(success=False, detected=True)) == 0.0
+    assert attacker_reward(outcome(success=False, detected=False)) == 0.5
+
+
+def test_the_attacker_bandit_is_validated() -> None:
+    with pytest.raises(ValueError, match="at least one attacker arm"):
+        BanditAttacker(arms=())
+    with pytest.raises(ValueError, match="exploration"):
+        BanditAttacker(exploration=-1.0)
+
+
+def test_a_learning_attacker_rediscovers_the_strongest_baseline() -> None:
+    config = ExperimentConfig(size="medium", difficulty="hard", seed=0, step_budget=80)
+    attacker = BanditAttacker()
+
+    result = play(
+        config,
+        greedy_factory,
+        ContextualDefender(),
+        attacker=attacker,
+        episodes=120,
+        seed=1,
+    )
+
+    assert sum(result.attacker_pulls.values()) == 120
+    assert result.attacker_pulls["shortest-path"] > 60
+    assert max(result.attacker_values, key=lambda arm: result.attacker_values[arm]) == (
+        "shortest-path"
+    )
+
+
+def test_a_fixed_attacker_reports_no_learned_preference() -> None:
+    config = ExperimentConfig(size="small", difficulty="easy", seed=1, step_budget=60)
+
+    result = play(config, greedy_factory, episodes=6, seed=2)
+
+    assert result.attacker_pulls == {}
+    assert result.attacker_values == {}
