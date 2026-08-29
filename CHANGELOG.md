@@ -31,6 +31,18 @@ All notable changes to RLAttack are recorded here. The project follows
   significance tests against a reference class.
 - Published curriculum policies and their transfer table (see README).
 
+### Fixed
+
+- **Transfer baselines were built from the wrong scenario.** `evaluate_transfer` took a
+  seed-only agent factory and the CLI built the baseline from the *configured* size and
+  difficulty, so a graph-aware baseline like `ShortestPathOracle` was constructed from
+  one scenario class and then run against the other eight, with a route and indices
+  belonging to a different graph. It still acted, via its greedy fallback, so the table
+  looked plausible while eight of nine rows measured a mis-indexed oracle. Corrected,
+  the oracle scores 83-100% across all nine classes rather than 18-38% on the large
+  ones, so the "generalization gradient" reported for 0.4.0 was mostly this bug. The
+  factory now receives the stage it will act in.
+
 ### Known gaps
 
 - The dashboard screenshots still show the v0.2 UI; re-capturing them needs a browser.
@@ -76,9 +88,11 @@ All notable changes to RLAttack are recorded here. The project follows
   with scenario size. The absolute remaining steps moved to `info`.
 - Detection risk is normalized by network size (`normalize_risk_by_size`, on by
   default). As an absolute budget of noisy actions it made `large` scenarios unwinnable
-  purely because they take more steps - the graph oracle scored 0/16 on every large
-  class. It now scores 19-38% there, and the remaining gap is a real generalization
-  gradient.
+  purely because they take more steps. Re-measured in 0.5.0 after the transfer-baseline
+  fix: with absolute risk the graph oracle scores 0% on `large/easy` and 0-50% across
+  the large classes; normalized it scores 88-100%. (The "19-38%" figure reported when
+  0.4.0 was written was measured with the mis-indexed transfer baseline fixed in
+  0.5.0.)
 - Curriculum stages scale the step budget with scenario size, so a transfer table does
   not report budget exhaustion as a generalization failure.
 

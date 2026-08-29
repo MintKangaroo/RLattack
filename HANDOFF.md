@@ -17,6 +17,7 @@
   discover/pivot 분리, 학습 policy 평가 경로, 분산·신뢰구간 보고.
 - **v0.4 (PR #9)** — 실험 프로토콜: 부분 관측(양자화 alert level, 크기를 숨기는 고정
   capacity), 능동적 defender, 다목적 episode, paired 유의성 검정, curriculum과 전이 평가.
+  ⚠️ v0.4에서 보고한 전이 표는 아래 5번 버그의 영향을 받았습니다. v0.5의 수치를 쓰세요.
 
 ## v0.5에서 바뀐 것
 
@@ -33,6 +34,29 @@
    인접한 것만 확률적으로 성공합니다.
 4. **리포트 뷰** — condition strip(dynamics/defender/discovery/observation),
    defender 타일, `transfer --report`로 만드는 self-contained 전이 표.
+5. **전이 baseline 버그 수정** — `evaluate_transfer`가 seed만 받는 factory를 썼고 CLI가
+   **설정된** size/difficulty로 baseline을 만들었습니다. 즉 `ShortestPathOracle`이 한
+   scenario class로 만들어져 나머지 8개 class에서 실행됐고, route와 index가 다른 graph의
+   것이었습니다. Greedy fallback 덕에 동작은 해서 표가 그럴듯해 보였을 뿐입니다.
+   수정 후 oracle은 9개 class 전부에서 83~100%입니다(이전 large 18~38%).
+   **v0.4에서 "실제 일반화 격차"라고 한 것은 대부분 이 버그였습니다.**
+
+### 전이 표 (graph oracle, 24 seeds, passive defender, 수정 후)
+
+| Class | success | detected | mean steps |
+| --- | --- | --- | --- |
+| small/easy | 100.0% | 0.0% | 17.1 ± 3.0 |
+| small/medium | 100.0% | 0.0% | 14.7 ± 4.0 |
+| small/hard | 100.0% | 0.0% | 18.4 ± 3.3 |
+| medium/easy | 87.5% | 12.5% | 38.5 ± 3.4 |
+| medium/medium | 91.7% | 8.3% | 30.2 ± 6.1 |
+| medium/hard | 91.7% | 8.3% | 28.3 ± 4.9 |
+| large/easy | 83.3% | 16.7% | 82.2 ± 4.7 |
+| large/medium | 91.7% | 8.3% | 62.6 ± 7.3 |
+| large/hard | 100.0% | 0.0% | 55.5 ± 6.8 |
+
+Risk 정규화는 이 버그와 무관하게 여전히 필요합니다. 정규화를 끄면 수정된 oracle도
+`large/easy`에서 0%, large 전체 0~50%입니다.
 
 ### 학습된 정책 재현
 
