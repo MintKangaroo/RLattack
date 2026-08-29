@@ -6,6 +6,21 @@ so they can be reproduced exactly with the commands shown.
 Model checkpoints are not committed (`artifacts/` is ignored). Regenerate them with the
 training command below.
 
+## How to read these tables
+
+Each section states its own seeds, condition, and scenario class, and they are not the
+same across sections. Three rules:
+
+- **Compare within a table, not across them.** Step budgets differ by section (64 for
+  the head-to-head, 96 for the families, 102 where a budget was matched to training),
+  and `steps` is meaningless across different budgets.
+- **A success rate is per condition and per scenario class.** The same policy scores
+  96.9% on `medium/hard` under exact discovery and 0% under noisy discovery, and the
+  graph oracle scores 100% on a star and 12.5% on a ring. Neither number generalizes.
+- **Significance is paired by seed.** Every agent in a table saw the same seed list, so
+  the reported differences are paired; a difference against a number from another
+  section is not.
+
 ## Setup
 
 ```bash
