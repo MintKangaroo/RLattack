@@ -80,7 +80,8 @@
 ## v0.7 - two learners and external graphs
 
 42. Train under the conditions a policy will be evaluated in, and publish a policy
-    trained under noisy discovery. (completed)
+    trained under noisy discovery. (completed; the policy improves reward and avoids
+    detection under that condition but still scores 0% success - see item 50)
 43. Let the attacker adapt between episodes, so the game has two learners. (completed)
 44. Condition the defender's policy on the episode so far instead of committing to one
     configuration per episode, and charge for responding. (completed)
@@ -96,6 +97,11 @@
     one-sided sweeps.
 49. Cost-model the defender's responses against a budget, so suppression trades off
     against operational load rather than a flat per-response penalty.
+50. Close the exploration gap under noisy discovery. The trained policy banks the
+    shaped reward on the entry host and stops rather than persisting through probe
+    failures; the oracle reaches 68.8% on the same condition, so the ceiling is the
+    learner, not the environment. Candidates: an intrinsic exploration bonus, a probe
+    budget the policy can observe, or much longer training.
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

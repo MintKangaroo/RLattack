@@ -27,8 +27,19 @@ All notable changes to RLAttack are recorded here. The project follows
   is playable.
 - `rlattack.bandit.EpsilonGreedy`, shared by the adaptive attacker and defender.
 
+### Fixed
+
+- **Training conditions never reached the environment.** `--discovery`, `--defender`,
+  and `--reward` were parsed and printed but not passed through, so a run advertised as
+  noisy trained under exact adjacency. A test now asserts the conditions arrive at the
+  environment rather than in the log line.
+
 ### Changed
 
+- Curriculum stages sample every earlier stage by default
+  (`--forget-previous-stages` restores isolation), the standard guard against
+  catastrophic forgetting - Stable-Baselines3 carries its episode buffer across stages,
+  so a curriculum's rolling reward would not reveal the loss.
 - **Responding now costs the defender.** It was free, which made "respond on every step"
   trivially optimal and the learning problem vacuous. `defender_reward` charges per
   response and charges more for false positives, which the environment already counted.
