@@ -26,7 +26,15 @@ _FORBIDDEN_KEYS = {
     "token",
     "private_key",
 }
-_IP_OR_URL = re.compile(r"(?:https?://|\b(?:\d{1,3}\.){3}\d{1,3}\b)", re.IGNORECASE)
+# A URL, a dotted-quad address, or a fully qualified name of three or more labels.
+# Two-label names are left alone because the simulator's own synthetic hostnames look
+# like that (``host-00.sim``); three labels is where real infrastructure names start.
+_LIVE_IDENTIFIER = re.compile(
+    r"(?:https?://"
+    r"|\b(?:\d{1,3}\.){3}\d{1,3}\b"
+    r"|\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+){2,}\b)",
+    re.IGNORECASE,
+)
 
 
 def assert_sanitized(value: Any, path: str = "root") -> None:
@@ -41,7 +49,7 @@ def assert_sanitized(value: Any, path: str = "root") -> None:
     elif isinstance(value, (list, tuple)):
         for index, child in enumerate(value):
             assert_sanitized(child, f"{path}[{index}]")
-    elif isinstance(value, str) and _IP_OR_URL.search(value):
+    elif isinstance(value, str) and _LIVE_IDENTIFIER.search(value):
         raise ValueError(f"live target identifier at {path}")
 
 

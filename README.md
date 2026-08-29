@@ -473,6 +473,7 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 - [Experimental Methodology](docs/methodology.md)
 - [Threat Model](docs/threat-model.md)
 - [Published results](docs/results.md)
+- [Importing attack graphs](docs/importing.md)
 - [Changelog](CHANGELOG.md)
 - [Roadmap](docs/roadmap.md)
 - [Contributing](CONTRIBUTING.md)

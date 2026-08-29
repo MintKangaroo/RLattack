@@ -122,3 +122,25 @@ def test_a_cyclic_graph_still_picks_an_entry_and_objective() -> None:
 
     assert scenario.entry_host_ids[0] in {host.id for host in scenario.hosts}
     assert scenario.objectives[0].host_id != scenario.entry_host_ids[0]
+
+
+def test_a_fully_qualified_name_in_any_field_is_refused() -> None:
+    """Forbidden *keys* are not enough; live names hide in ordinary attributes."""
+
+    graph: nx.DiGraph[Any] = nx.DiGraph()
+    graph.add_node("a", kind="host", fact="hostname(webserver.corp.example)")
+    graph.add_edge("a", "b")
+
+    with pytest.raises(ValueError, match="live target identifier"):
+        scenario_from_graph(graph)
+
+
+def test_unread_attributes_cannot_reach_the_scenario() -> None:
+    graph: nx.DiGraph[Any] = nx.DiGraph()
+    graph.add_node("a", kind="host", owner="blue-team", note="staging box")
+    graph.add_edge("a", "b")
+
+    scenario = scenario_from_graph(graph)
+
+    assert "blue-team" not in scenario.model_dump_json()
+    assert "staging" not in scenario.model_dump_json()
