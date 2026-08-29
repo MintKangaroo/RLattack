@@ -100,6 +100,11 @@ class DynamicsConfig:
 
     The environment stays reproducible: every random draw comes from the seeded
     :attr:`gymnasium.Env.np_random` stream, so a seed fixes the whole trajectory.
+
+    Detection risk is normalized by network size by default. Without it the threshold is
+    an absolute budget of noisy actions, so a larger network is unwinnable purely
+    because reaching its objective takes more steps - which shows up in a transfer
+    table as a generalization failure that is really a calibration artifact.
     """
 
     stochastic: bool = True
@@ -108,6 +113,8 @@ class DynamicsConfig:
     detection_threshold: float = 0.9
     failed_attempt_risk: float = 0.05
     pivot_risk: float = 0.03
+    normalize_risk_by_size: bool = True
+    risk_reference_hosts: int = 6
 
     def __post_init__(self) -> None:
         for name in ("base_success_probability", "minimum_success_probability"):
@@ -120,6 +127,8 @@ class DynamicsConfig:
             value = getattr(self, name)
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be in [0, 1]")
+        if self.risk_reference_hosts < 1:
+            raise ValueError("risk_reference_hosts must be positive")
 
     @classmethod
     def deterministic(cls) -> DynamicsConfig:
@@ -225,6 +234,11 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self.dynamics = dynamics or DynamicsConfig()
         self.observation_config = observation_config or ObservationConfig()
         self.defender = defender or DefenderConfig()
+        self._risk_scale = (
+            min(1.0, self.dynamics.risk_reference_hosts / len(scenario.hosts))
+            if self.dynamics.normalize_risk_by_size
+            else 1.0
+        )
         self._host_index = {record.id: index for index, record in enumerate(scenario.hosts)}
         self._service_index = {record.id: index for index, record in enumerate(scenario.services)}
         self._vulnerability_index = {
@@ -295,7 +309,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "acquired_privileges": spaces.MultiBinary(self._privilege_width),
             "collected_objectives": spaces.MultiBinary(self._objective_width),
             "alert_level": spaces.MultiBinary(config.alert_levels),
-            "steps_remaining": spaces.Box(0.0, step_budget, shape=(1,), dtype=np.float32),
+            "budget_fraction": spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
         }
         if config.expose_exact_risk:
             channels["detection_risk"] = spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32)
@@ -344,6 +358,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "alert_level": self.alert_level(),
             "path_cost": self._path_cost,
             "steps": self._steps,
+            "steps_remaining": self.step_budget,
             "target_count": self.target_count,
             "defender_action": "none",
             "defender_actions": 0,
@@ -436,6 +451,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "collected_objectives": int(self._collected_objectives.sum()),
             "path_cost": self._path_cost,
             "steps": self._steps,
+            "steps_remaining": self.step_budget - self._steps,
             "target_count": self.target_count,
             "valid_action": valid,
         }
@@ -700,7 +716,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             self._acquired_privileges[self._privilege_index[privilege_id]] = 0
 
     def _raise_risk(self, increment: float) -> None:
-        self._detection_risk = min(1.0, self._detection_risk + increment)
+        self._detection_risk = min(1.0, self._detection_risk + increment * self._risk_scale)
 
     def _success_probability(self, exploitability: float | None) -> float:
         if not self.dynamics.stochastic:
@@ -744,7 +760,9 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "acquired_privileges": self._acquired_privileges.copy(),
             "collected_objectives": self._collected_objectives.copy(),
             "alert_level": alert,
-            "steps_remaining": np.array([self.step_budget - self._steps], dtype=np.float32),
+            "budget_fraction": np.array(
+                [(self.step_budget - self._steps) / self.step_budget], dtype=np.float32
+            ),
         }
         if self.observation_config.expose_exact_risk:
             observation["detection_risk"] = np.array([self._detection_risk], dtype=np.float32)

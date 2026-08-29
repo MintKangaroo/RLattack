@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
@@ -173,4 +173,66 @@ def train_ppo(  # pragma: no cover - exercised by the optional long-running trai
     model.save(str(selected.output_dir / "final"))
     train_env.close()
     eval_env.close()
+    return model
+
+
+def train_curriculum(  # pragma: no cover - exercised by the optional training job
+    env_factories: Sequence[Callable[[], gym.Env[Any, Any]]],
+    stage_timesteps: Sequence[int],
+    config: PPOTrainingConfig | None = None,
+    algorithm: str = "ppo",
+) -> Any:
+    """Train one policy across a sequence of scenario stages.
+
+    The model is carried between stages with ``set_env`` and
+    ``reset_num_timesteps=False``, so the run is a curriculum rather than a set of
+    independent trainings. Every stage must expose the same observation and action
+    space; use ``ObservationConfig.for_curriculum()`` to guarantee that.
+    """
+
+    if len(env_factories) != len(stage_timesteps):
+        raise ValueError("each stage needs its own timestep budget")
+    if not env_factories:
+        raise ValueError("at least one curriculum stage is required")
+    if algorithm not in ("dqn", "ppo"):
+        raise ValueError("algorithm must be 'dqn' or 'ppo'")
+
+    selected = config or PPOTrainingConfig()
+    try:
+        from stable_baselines3 import DQN, PPO
+        from stable_baselines3.common.monitor import Monitor
+        from stable_baselines3.common.vec_env import DummyVecEnv
+    except ImportError as error:
+        raise RuntimeError(
+            "Curriculum training requires the optional '.[training]' dependencies"
+        ) from error
+
+    selected.output_dir.mkdir(parents=True, exist_ok=True)
+    selected.tensorboard_log.mkdir(parents=True, exist_ok=True)
+    model: Any = None
+    for index, (factory, timesteps) in enumerate(zip(env_factories, stage_timesteps, strict=True)):
+
+        def monitored(build: Callable[[], gym.Env[Any, Any]] = factory) -> Any:
+            return Monitor(build())
+
+        env = DummyVecEnv([monitored])
+        if model is None:
+            builder = DQN if algorithm == "dqn" else PPO
+            model = builder(
+                "MultiInputPolicy",
+                env,
+                seed=selected.seed,
+                tensorboard_log=str(selected.tensorboard_log),
+                verbose=1,
+            )
+        else:
+            model.set_env(env)
+        model.learn(
+            total_timesteps=timesteps,
+            reset_num_timesteps=False,
+            tb_log_name=f"rlattack-{algorithm}-curriculum",
+        )
+        model.save(str(selected.output_dir / f"stage-{index:02d}"))
+        env.close()
+    model.save(str(selected.output_dir / "final"))
     return model

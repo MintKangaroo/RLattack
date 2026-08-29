@@ -211,7 +211,7 @@ def run_episode(
                         np.sum(observation["validated_vulnerabilities"])
                     ),
                     "acquired_privileges": int(np.sum(observation["acquired_privileges"])),
-                    "steps_remaining": float(observation["steps_remaining"][0]),
+                    "steps_remaining": float(cast(int, info["steps_remaining"])),
                 },
             )
         )

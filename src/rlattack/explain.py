@@ -61,7 +61,7 @@ def explain_action(
     services = int(np.sum(observation["known_services"]))
     privileges = int(np.sum(observation["acquired_privileges"]))
     risk = float(info.get("detection_risk", 0.0))
-    budget = float(observation["steps_remaining"][0])
+    budget = float(info.get("steps_remaining", 0.0))
     reasons = (
         f"discovered_hosts={discovered}",
         f"known_services={services}",

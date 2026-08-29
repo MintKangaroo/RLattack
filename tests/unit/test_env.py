@@ -10,6 +10,7 @@ from rlattack.env import (
     DynamicsConfig,
     ObservationConfig,
 )
+from rlattack.generator import generate_scenario
 from rlattack.scenario import (
     AccessEdge,
     Credential,
@@ -253,6 +254,8 @@ def test_dynamics_configuration_is_validated() -> None:
         DynamicsConfig(failed_attempt_risk=-0.1)
     with pytest.raises(ValueError, match="pivot_risk"):
         DynamicsConfig(pivot_risk=1.5)
+    with pytest.raises(ValueError, match="risk_reference_hosts"):
+        DynamicsConfig(risk_reference_hosts=0)
 
 
 def test_duplicate_actions_are_penalized() -> None:
@@ -469,3 +472,21 @@ def test_a_collected_objective_cannot_be_collected_twice() -> None:
         ]
         == 0
     )
+
+
+def test_detection_risk_is_normalized_by_network_size() -> None:
+    """A larger network must not be unwinnable purely because it takes more steps."""
+
+    def enumeration_risk(host_count: int, normalize: bool) -> float:
+        scenario = generate_scenario("small" if host_count == 3 else "large", "easy", 0)
+        env = AttackPathEnv(
+            scenario,
+            dynamics=DynamicsConfig(stochastic=False, normalize_risk_by_size=normalize),
+        )
+        env.reset(seed=0)
+        env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+        _, _, _, _, info = env.step(env.encode_action(Action.ENUMERATE_SERVICE, 0))
+        return float(info["detection_risk"])
+
+    assert enumeration_risk(12, normalize=True) < enumeration_risk(12, normalize=False)
+    assert enumeration_risk(3, normalize=True) == enumeration_risk(3, normalize=False)

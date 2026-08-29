@@ -10,6 +10,13 @@ from typing import cast
 
 from rlattack import __version__
 from rlattack.agents import Agent
+from rlattack.curriculum import (
+    DEFAULT_CURRICULUM,
+    CurriculumStage,
+    StageEnv,
+    evaluate_transfer,
+    stage_env_factory,
+)
 from rlattack.dashboard import run_dashboard
 from rlattack.env import AttackPathEnv, ObservationConfig
 from rlattack.evaluation import BenchmarkMetrics
@@ -19,7 +26,9 @@ from rlattack.experiment import (
     DefenderMode,
     ExperimentConfig,
     ObservationMode,
+    benchmark_seeds,
     build_dashboard_data,
+    create_agent,
     run_benchmarks,
     run_reward_ablation,
 )
@@ -32,6 +41,7 @@ from rlattack.stats import compare_benchmarks
 from rlattack.training import (
     DQNTrainingConfig,
     PPOTrainingConfig,
+    train_curriculum,
     train_dqn,
     train_ppo,
     training_dependencies_available,
@@ -71,6 +81,9 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
         default="passive",
         help="passive is the control condition; adaptive responds to the attacker",
     )
+
+
+TRAINING_SEEDS: tuple[int, ...] = tuple(range(32))
 
 
 def _add_significance_arguments(parser: argparse.ArgumentParser, *, default_reference: str) -> None:
@@ -175,6 +188,21 @@ def build_parser() -> argparse.ArgumentParser:
     ablation.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
     _add_significance_arguments(ablation, default_reference="shaped")
 
+    transfer = commands.add_parser(
+        "transfer",
+        help="evaluate one policy on every scenario class to measure generalization",
+    )
+    _add_experiment_arguments(transfer)
+    transfer.add_argument(
+        "--policy",
+        type=Path,
+        help="optional local Stable-Baselines3 checkpoint; defaults to the --agent baseline",
+    )
+    transfer.add_argument("--policy-algorithm", choices=("dqn", "ppo"), default="ppo")
+    transfer.add_argument("--output", type=Path, default=Path("artifacts/transfer.jsonl"))
+    transfer.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    _add_significance_arguments(transfer, default_reference="small/easy")
+
     train = commands.add_parser(
         "train", help="train an optional Stable-Baselines3 policy on generated scenarios"
     )
@@ -191,6 +219,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="fixed capacities let one policy transfer across scenario sizes",
     )
     train.add_argument("--output-dir", type=Path, default=Path("artifacts/policies"))
+    train.add_argument(
+        "--curriculum",
+        action="store_true",
+        help="train one policy across the staged scenario curriculum",
+    )
     return parser
 
 
@@ -263,6 +296,69 @@ def _run_ablation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _stage_env_builder(
+    stage: CurriculumStage, step_budget: int, observation_config: ObservationConfig
+) -> Callable[[], StageEnv]:
+    """Return a zero-argument environment builder for one curriculum stage."""
+
+    factory = stage_env_factory(
+        stage,
+        step_budget=step_budget,
+        observation_config=observation_config,
+    )
+
+    def build() -> StageEnv:
+        return StageEnv(stage, TRAINING_SEEDS, factory)
+
+    return build
+
+
+def _run_transfer(args: argparse.Namespace) -> int:
+    """Evaluate one policy on every scenario class with a shared seed list."""
+
+    config = _config_from_args(args)
+    if args.policy is not None:
+        policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
+        label = args.policy_algorithm
+
+        def agent_factory(seed: int) -> Agent:
+            del seed
+            return policy
+    else:
+        label = config.agent
+
+        def agent_factory(seed: int) -> Agent:
+            return create_agent(
+                config.agent,
+                generate_scenario(config.size, config.difficulty, seed),
+                seed=seed,
+            )
+
+    metrics = evaluate_transfer(
+        agent_factory,
+        benchmark_seeds(config),
+        step_budget=config.step_budget,
+        reward_strategy=config.reward_strategy,
+        dynamics=config.dynamics(),
+        defender=config.defender_config(),
+    )
+    output = write_results(metrics, args.output, args.format)
+    print("RLAttack transfer evaluation")
+    print(f"  policy    : {label}")
+    print(f"  seeds     : {config.benchmark_episodes} shared across every scenario class")
+    print(f"  defender  : {config.defender}")
+    for name, metric in metrics.items():
+        print(
+            f"  {name:<14} success={metric.success_rate:5.1%} "
+            f"detected={metric.detection_rate:5.1%} "
+            f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
+            f"reward={metric.mean_reward:7.2f}"
+        )
+    _print_comparisons(metrics, args)
+    print(f"  export    : {output}")
+    return 0
+
+
 def _run_training(args: argparse.Namespace) -> int:
     """Train one optional Stable-Baselines3 policy on generated scenarios."""
 
@@ -288,6 +384,17 @@ def _run_training(args: argparse.Namespace) -> int:
             observation_config=observation_config,
         )
 
+    if args.curriculum:
+        stages = DEFAULT_CURRICULUM
+        train_curriculum(
+            [_stage_env_builder(stage, args.step_budget, observation_config) for stage in stages],
+            [stage.timesteps for stage in stages],
+            PPOTrainingConfig(seed=args.seed, output_dir=args.output_dir),
+            algorithm=args.algorithm,
+        )
+        labels = ", ".join(stage.label for stage in stages)
+        print(f"Trained {args.algorithm} curriculum ({labels}) into {args.output_dir.resolve()}")
+        return 0
     if args.algorithm == "dqn":
         train_dqn(
             env_factory,
@@ -337,6 +444,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_benchmark(args)
     if args.command == "ablation":
         return _run_ablation(args)
+    if args.command == "transfer":
+        return _run_transfer(args)
     if args.command == "train":
         return _run_training(args)
 
