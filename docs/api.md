@@ -1,6 +1,6 @@
 # Dashboard and API
 
-RLAttack `v0.2.0`은 simulation 결과를 탐색하는 local FastAPI dashboard를 제공합니다.
+RLAttack `v0.3.0`은 simulation 결과를 탐색하는 local FastAPI dashboard를 제공합니다.
 이 API가 실행하는 것은 검증된 `AttackPathEnv`뿐이며 scanner, shell, 외부 target client는
 포함하지 않습니다.
 
@@ -41,8 +41,9 @@ Interactive Simulation Observatory HTML을 반환합니다. 모든 CSS와 JavaSc
 | `seed` | integer | `42` | 모든 integer |
 | `agent` | string | `greedy` | `random`, `greedy`, `rule-based`, `shortest-path` |
 | `reward_strategy` | string | `risk-aware` | `sparse`, `shaped`, `risk-aware`, `cost-aware` |
-| `step_budget` | integer | `64` | 1 이상 |
-| `benchmark_episodes` | integer | `8` | 1 이상 |
+| `step_budget` | integer | `64` | 1–512 |
+| `benchmark_episodes` | integer | `8` | 1–256 |
+| `stochastic` | boolean | `true` | `true`, `false` |
 
 예:
 
@@ -55,11 +56,36 @@ Response에는 다음 top-level field가 있습니다.
 - `config`: 결과를 재현하는 전체 입력
 - `scenario`: host node, network edge, oracle route와 graph 통계
 - `episode`: outcome, reward, risk, path cost, affected node, decision trace
-- `benchmarks`: 네 baseline의 success rate와 평균 metric
+- `benchmarks`: 네 baseline의 success rate, detection rate, 평균 metric, 표준편차,
+  95% reward 신뢰구간
+- `benchmark_protocol`: benchmark 방식(`per-seed-scenario`)과 사용한 seed 목록
 - `reward`: 선택 strategy의 명시적 reward parameter
 - `safety`: simulation-only capability 선언
 
-잘못된 enum이나 budget은 HTTP `422`를 반환합니다.
+잘못된 enum이나 범위를 벗어난 budget은 HTTP `422`를 반환합니다. Dashboard API는 file
+path를 받지 않으므로 학습된 checkpoint 평가는 CLI에서만 가능합니다.
+
+## Batch benchmark
+
+통계 분석용 raw episode record가 필요하면 CLI를 사용합니다.
+
+```bash
+rlattack benchmark --size medium --difficulty hard --episodes 64 \
+  --output artifacts/benchmark.jsonl
+
+rlattack benchmark --episodes 64 --format csv --output artifacts/benchmark.csv \
+  --policy artifacts/policies/final.zip --policy-algorithm dqn
+```
+
+각 record는 `agent`, `seed`, `success`, `detected`, `steps`, `reward`,
+`detection_risk`, `path_cost`를 포함합니다.
+
+## Training
+
+```bash
+python -m pip install -e ".[training]"
+rlattack train --algorithm ppo --size medium --timesteps 200000
+```
 
 ## Portable report
 

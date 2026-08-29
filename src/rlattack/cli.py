@@ -4,16 +4,32 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
 from rlattack import __version__
+from rlattack.agents import Agent
 from rlattack.dashboard import run_dashboard
-from rlattack.experiment import AgentName, ExperimentConfig, build_dashboard_data
+from rlattack.env import AttackPathEnv
+from rlattack.experiment import (
+    AgentName,
+    ExperimentConfig,
+    build_dashboard_data,
+    run_benchmarks,
+)
+from rlattack.export import write_results
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
+from rlattack.policies import Algorithm, load_policy
 from rlattack.report import write_dashboard_report
 from rlattack.reward import RewardStrategy
+from rlattack.training import (
+    DQNTrainingConfig,
+    PPOTrainingConfig,
+    train_dqn,
+    train_ppo,
+    training_dependencies_available,
+)
 
 
 def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
@@ -32,6 +48,11 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--step-budget", type=int, default=64)
     parser.add_argument("--episodes", type=int, default=8)
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="disable transition uncertainty so every valid action succeeds",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +84,30 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard = commands.add_parser("dashboard", help="start the interactive local dashboard")
     dashboard.add_argument("--host", default="127.0.0.1")
     dashboard.add_argument("--port", type=int, default=8000)
+
+    benchmark = commands.add_parser(
+        "benchmark", help="run a multi-seed generalization benchmark and export the episodes"
+    )
+    _add_experiment_arguments(benchmark)
+    benchmark.add_argument("--output", type=Path, default=Path("artifacts/benchmark.jsonl"))
+    benchmark.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    benchmark.add_argument(
+        "--policy",
+        type=Path,
+        help="optional local Stable-Baselines3 checkpoint to benchmark alongside the baselines",
+    )
+    benchmark.add_argument("--policy-algorithm", choices=("dqn", "ppo"), default="dqn")
+
+    train = commands.add_parser(
+        "train", help="train an optional Stable-Baselines3 policy on generated scenarios"
+    )
+    train.add_argument("--algorithm", choices=("dqn", "ppo"), default="dqn")
+    train.add_argument("--size", choices=("small", "medium", "large"), default="medium")
+    train.add_argument("--difficulty", choices=("easy", "medium", "hard"), default="hard")
+    train.add_argument("--seed", type=int, default=42)
+    train.add_argument("--timesteps", type=int, default=10_000)
+    train.add_argument("--step-budget", type=int, default=64)
+    train.add_argument("--output-dir", type=Path, default=Path("artifacts/policies"))
     return parser
 
 
@@ -75,7 +120,70 @@ def _config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         reward_strategy=cast(RewardStrategy, args.reward),
         step_budget=args.step_budget,
         benchmark_episodes=args.episodes,
+        stochastic=not args.deterministic,
     )
+
+
+def _run_benchmark(args: argparse.Namespace) -> int:
+    """Run the multi-seed benchmark and write per-episode records."""
+
+    config = _config_from_args(args)
+    extra: dict[str, Callable[[int], Agent]] = {}
+    if args.policy is not None:
+        policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
+        extra[args.policy_algorithm] = lambda seed: policy
+    metrics = run_benchmarks(config, extra)
+    output = write_results(metrics, args.output, args.format)
+    print("RLAttack generalization benchmark")
+    print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
+    print(f"  dynamics  : {'stochastic' if config.stochastic else 'deterministic'}")
+    for name, metric in metrics.items():
+        print(
+            f"  {name:<14} success={metric.success_rate:5.1%} "
+            f"detected={metric.detection_rate:5.1%} "
+            f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
+            f"reward={metric.mean_reward:7.2f} "
+            f"[{metric.reward_ci_low:7.2f}, {metric.reward_ci_high:7.2f}]"
+        )
+    print(f"  export    : {output}")
+    return 0
+
+
+def _run_training(args: argparse.Namespace) -> int:
+    """Train one optional Stable-Baselines3 policy on generated scenarios."""
+
+    if not training_dependencies_available():
+        print("Training requires the optional dependencies: pip install -e '.[training]'")
+        return 1
+    scenario = generate_scenario(
+        cast(ScenarioSize, args.size),
+        cast(Difficulty, args.difficulty),
+        args.seed,
+    )
+
+    def env_factory() -> AttackPathEnv:
+        return AttackPathEnv(scenario, step_budget=args.step_budget)
+
+    if args.algorithm == "dqn":
+        train_dqn(
+            env_factory,
+            DQNTrainingConfig(
+                total_timesteps=args.timesteps,
+                seed=args.seed,
+                output_dir=args.output_dir,
+            ),
+        )
+    else:
+        train_ppo(
+            env_factory,
+            PPOTrainingConfig(
+                total_timesteps=args.timesteps,
+                seed=args.seed,
+                output_dir=args.output_dir,
+            ),
+        )
+    print(f"Trained {args.algorithm} policy saved under {args.output_dir.resolve()}")
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -101,6 +209,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Scenario exported: {args.output.resolve()}")
         return 0
 
+    if args.command == "benchmark":
+        return _run_benchmark(args)
+    if args.command == "train":
+        return _run_training(args)
+
     config = _config_from_args(args)
     data = build_dashboard_data(config)
     report_path = write_dashboard_report(data, args.report)
@@ -111,10 +224,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             encoding="utf-8",
         )
     episode = data["episode"]
-    print("RLAttack deterministic experiment")
+    if episode["success"]:
+        outcome = "success"
+    elif episode["detected"]:
+        outcome = "detected"
+    else:
+        outcome = "incomplete"
+    print("RLAttack reproducible experiment")
     print(f"  scenario : {data['scenario']['id']}")
     print(f"  policy   : {episode['agent_label']}")
-    print(f"  outcome  : {'success' if episode['success'] else 'incomplete'}")
+    print(f"  dynamics : {'stochastic' if config.stochastic else 'deterministic'}")
+    print(f"  outcome  : {outcome}")
     print(f"  steps    : {episode['steps']} / {config.step_budget}")
     print(f"  reward   : {episode['cumulative_reward']:.2f}")
     print(f"  report   : {report_path}")

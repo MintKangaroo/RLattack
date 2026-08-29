@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+title: "RLAttack: a simulation observatory for reinforcement-learning attack paths"
+message: "If you use this software in academic work, please cite it as below."
+type: software
+authors:
+  - name: "AI Security Lab Contributors"
+repository-code: "https://github.com/MintKangaroo/RLattack"
+license: MIT
+version: 0.3.0
+date-released: "2026-08-29"
+keywords:
+  - reinforcement-learning
+  - cybersecurity
+  - attack-graph
+  - simulation
+abstract: >-
+  RLAttack is a simulation-only research environment for studying reinforcement-learning
+  policies over synthetic attack graphs. It never performs network access, subprocess
+  execution, or interaction with real systems.

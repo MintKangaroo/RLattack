@@ -3,6 +3,7 @@ from typing import cast
 import pytest
 
 from rlattack.agents import GreedyAgent, RandomAgent, RuleBasedAgent, ShortestPathOracle
+from rlattack.env import DynamicsConfig
 from rlattack.experiment import (
     AgentName,
     ExperimentConfig,
@@ -23,6 +24,8 @@ def test_experiment_config_validates_public_inputs() -> None:
         {"reward_strategy": "unknown"},
         {"step_budget": 0},
         {"benchmark_episodes": 0},
+        {"step_budget": 10_000},
+        {"benchmark_episodes": 10_000},
     )
     for values in invalid_values:
         with pytest.raises(ValueError):
@@ -42,7 +45,13 @@ def test_agent_factory_covers_all_baselines() -> None:
 
 def test_episode_runner_returns_trace_and_real_graph_cost() -> None:
     scenario = generate_scenario("small", "easy", seed=7)
-    result = run_episode(scenario, agent_name="greedy", seed=7, step_budget=64)
+    result = run_episode(
+        scenario,
+        agent_name="greedy",
+        seed=7,
+        step_budget=64,
+        dynamics=DynamicsConfig.deterministic(),
+    )
 
     assert result.success is True
     assert result.terminated is True
@@ -52,7 +61,13 @@ def test_episode_runner_returns_trace_and_real_graph_cost() -> None:
     assert scenario.objectives[0].id in result.visited_nodes
     assert result.trace[-1].action == "collect_simulated_objective"
 
-    truncated = run_episode(scenario, agent_name="greedy", seed=7, step_budget=1)
+    truncated = run_episode(
+        scenario,
+        agent_name="greedy",
+        seed=7,
+        step_budget=1,
+        dynamics=DynamicsConfig.deterministic(),
+    )
     assert truncated.success is False
     assert truncated.truncated is True
 
@@ -66,13 +81,14 @@ def test_dashboard_data_is_reproducible_and_complete() -> None:
         reward_strategy="cost-aware",
         step_budget=64,
         benchmark_episodes=2,
+        stochastic=False,
     )
 
     first = build_dashboard_data(config)
     second = build_dashboard_data(config)
 
     assert first == second
-    assert first["schema_version"] == "1.0"
+    assert first["schema_version"] == "2.0"
     assert first["episode"]["success"] is True
     assert len(first["benchmarks"]) == 4
     rule_metrics = next(
@@ -81,6 +97,12 @@ def test_dashboard_data_is_reproducible_and_complete() -> None:
     assert rule_metrics["success_rate"] == 1.0
     assert first["scenario"]["oracle_route"][0] == "host-00"
     assert first["safety"]["network_access"] is False
+    assert first["benchmark_protocol"]["mode"] == "per-seed-scenario"
+    assert first["benchmark_protocol"]["seeds"] == [9, 10]
+    assert "std_reward" in rule_metrics
+    assert "outcomes" not in rule_metrics
+    assert first["episode"]["detected"] is False
+    assert first["episode"]["trace"][0]["target_id"] is not None
 
 
 def test_dashboard_data_uses_default_config() -> None:

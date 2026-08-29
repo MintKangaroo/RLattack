@@ -231,16 +231,16 @@ _HTML_START = """<!doctype html>
 
     <section class="bottom-grid">
       <article class="panel">
-        <div class="panel-head"><div><h2>Baseline comparison</h2><div class="sub" id="benchmark-sub"></div></div><span class="tag">Shared seeds</span></div>
+        <div class="panel-head"><div><h2>Baseline comparison</h2><div class="sub" id="benchmark-sub"></div></div><span class="tag">Generalization · per-seed graphs</span></div>
         <div id="benchmarks"></div>
-        <div class="legend"><span>BAR · SUCCESS RATE</span><span>LABEL · MEAN STEPS</span></div>
+        <div class="legend"><span>BAR · SUCCESS RATE</span><span>LABEL · MEAN STEPS ± SD · DETECTION RATE</span></div>
       </article>
       <article class="panel">
         <div class="panel-head">
           <div><h2>Decision trace</h2><div class="sub">Every action and immediate contribution</div></div>
           <div class="panel-actions"><button class="ghost" id="export" type="button">Export JSON</button></div>
         </div>
-        <div class="table-wrap"><table><thead><tr><th>Step</th><th>Action</th><th>State</th><th>Risk</th><th>Reward</th><th>Valid</th></tr></thead><tbody id="trace"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Step</th><th>Action</th><th>Target</th><th>State</th><th>Risk</th><th>Reward</th><th>Outcome</th></tr></thead><tbody id="trace"></tbody></table></div>
       </article>
     </section>
 
@@ -299,7 +299,7 @@ _HTML_END = """
     function render(data) {
       model=data; syncControls(data);
       const e=data.episode, c=data.config, s=data.scenario;
-      $('stat-status').textContent=e.success?'SUCCESS':e.truncated?'BUDGET':'STOPPED';
+      $('stat-status').textContent=e.success?'SUCCESS':e.detected?'DETECTED':e.truncated?'BUDGET':'STOPPED';
       $('stat-status-note').textContent=`${e.steps} / ${c.step_budget} steps · ${e.agent_label}`;
       $('stat-reward').textContent=(e.cumulative_reward>=0?'+':'')+num(e.cumulative_reward);
       $('stat-reward-note').textContent=`${c.reward_strategy} reward strategy`;
@@ -310,17 +310,17 @@ _HTML_END = """
       const outcome=$('outcome');
       outcome.classList.toggle('fail',!e.success);
       $('outcome-status').textContent=e.success?'Objective collected':'Episode incomplete';
-      $('outcome-title').textContent=e.success?'Policy reached the goal.':e.truncated?'Step budget exhausted.':'Policy stopped early.';
-      $('outcome-copy').textContent=`Seed ${c.seed} produced ${e.steps} deterministic decisions with ${pct(e.detection_risk)} terminal detection risk.`;
-      $('benchmark-sub').textContent=`${c.benchmark_episodes} episodes per policy · budget ${c.step_budget}`;
+      $('outcome-title').textContent=e.success?'Policy reached the goal.':e.detected?'Policy tripped the detection threshold.':e.truncated?'Step budget exhausted.':'Policy stopped early.';
+      $('outcome-copy').textContent=`Seed ${c.seed} produced ${e.steps} reproducible decisions with ${pct(e.detection_risk)} terminal detection risk under ${c.stochastic?'stochastic':'deterministic'} dynamics.`;
+      $('benchmark-sub').textContent=`${c.benchmark_episodes} independently seeded scenarios per policy · budget ${c.step_budget}`;
       $('route').innerHTML=s.oracle_route.map((node,index) =>
         `<li><b>${String(index+1).padStart(2,'0')}</b><span>${esc(node)}</span><small>${index===0?'ENTRY':index===s.oracle_route.length-1?'GOAL':'PIVOT'}</small></li>`
       ).join('');
       $('benchmarks').innerHTML=data.benchmarks.map(metric =>
-        `<div class="bench-row"><span>${esc(metric.label)}</span><div class="bar"><i style="width:${Math.max(1,metric.success_rate*100)}%"></i></div><strong>${pct(metric.success_rate)}<br><small>${num(metric.mean_steps,1)} st</small></strong></div>`
+        `<div class="bench-row"><span>${esc(metric.label)}</span><div class="bar"><i style="width:${Math.max(1,metric.success_rate*100)}%"></i></div><strong>${pct(metric.success_rate)}<br><small>${num(metric.mean_steps,1)}±${num(metric.std_steps,1)} st · det ${pct(metric.detection_rate)}</small></strong></div>`
       ).join('');
       $('trace').innerHTML=e.trace.map(row =>
-        `<tr><td>${row.step}</td><td class="action">${esc(row.action)}</td><td>${row.state.discovered_hosts}H · ${row.state.known_services}S · ${row.state.acquired_privileges}P</td><td>${pct(row.detection_risk)}</td><td>${row.reward>=0?'+':''}${num(row.reward)}</td><td><span class="pill ${row.valid?'':'invalid'}">${row.valid?'valid':'invalid'}</span></td></tr>`
+        `<tr><td>${row.step}</td><td class="action">${esc(row.action)}</td><td class="action">${esc(row.target_id??'—')}</td><td>${row.state.discovered_hosts}H · ${row.state.known_services}S · ${row.state.acquired_privileges}P</td><td>${pct(row.detection_risk)}</td><td>${row.reward>=0?'+':''}${num(row.reward)}</td><td><span class="pill ${row.valid&&row.outcome!=='failed'?'':'invalid'}">${esc(row.outcome)}</span></td></tr>`
       ).join('');
       renderGraph(data);
     }

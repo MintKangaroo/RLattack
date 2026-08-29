@@ -10,7 +10,7 @@
     <a href="https://github.com/MintKangaroo/RLattack/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MintKangaroo/RLattack/actions/workflows/ci.yml/badge.svg?branch=main"></a>
     <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-56f39a?logo=python&logoColor=07100e">
     <img alt="Coverage 100%" src="https://img.shields.io/badge/coverage-100%25-56f39a">
-    <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-71a7ff">
+    <img alt="Version 0.3.0" src="https://img.shields.io/badge/version-0.3.0-71a7ff">
     <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-d7e2dc"></a>
   </p>
   <p>
@@ -144,9 +144,18 @@ rlattack scenario \
 | Command | 역할 |
 | --- | --- |
 | `rlattack demo` | Episode와 4개 baseline benchmark를 실행하고 HTML report 생성 |
-| `rlattack scenario` | 검증된 deterministic scenario를 JSON으로 내보내기 |
+| `rlattack benchmark` | 다중 seed generalization benchmark 실행과 JSONL/CSV export |
+| `rlattack train` | optional DQN/PPO policy 학습 (`.[training]` 필요) |
+| `rlattack scenario` | 검증된 scenario를 JSON으로 내보내기 |
 | `rlattack dashboard` | loopback 전용 interactive dashboard와 API 실행 |
 | `rlattack --version` | 설치된 package version 확인 |
+
+모든 experiment command는 `--deterministic`으로 transition uncertainty를 끌 수 있습니다.
+
+```bash
+rlattack benchmark --size medium --difficulty hard --episodes 64 \
+  --output artifacts/benchmark.jsonl
+```
 
 `python -m rlattack`도 같은 CLI를 실행합니다.
 
@@ -164,8 +173,16 @@ scenario = generate_scenario(size="medium", difficulty="hard", seed=42)
 env = AttackPathEnv(scenario, step_budget=64)
 
 observation, info = env.reset(seed=42)
+
+# Action은 (action_type, target) 쌍입니다.
 action = np.int64(np.flatnonzero(info["action_mask"])[0])
+action_type, target = env.decode_action(action)
 observation, reward, terminated, truncated, info = env.step(action)
+
+# 특정 대상을 직접 지정할 수도 있습니다.
+from rlattack.env import Action
+
+env.step(env.encode_action(Action.SCAN_SERVICE, target=0))
 ```
 
 ### 설명 가능한 episode
@@ -215,23 +232,41 @@ Observation은 오직 agent가 현재까지 관찰한 simulation state로 구성
 | `detection_risk` | 누적 normalized risk |
 | `steps_remaining` | 남은 episode budget |
 
-Action space는 고정된 9개 discrete action입니다.
+`enumerated_services`도 관찰 가능한 상태로 노출됩니다.
 
-| Action | In-process 상태 전이 |
-| --- | --- |
-| `discover_host` | graph edge를 따라 새 host 발견 |
-| `scan_service` | 발견된 host의 다음 service 확인 |
-| `enumerate_service` | service 상세 관찰 및 detection risk 반영 |
-| `validate_vulnerability` | 모델링된 weakness 검증 |
-| `attempt_simulated_access` | access edge를 credential state로 전이 |
-| `escalate_simulated_privilege` | privilege edge 적용 |
-| `pivot_simulated_network` | 다음 host로 simulation path 확장 |
-| `collect_simulated_objective` | 조건을 만족한 objective 수집 |
-| `stop` | episode 자발적 종료 |
+Action space는 **action type × target**입니다. Flat encoding은
+`action_type * target_count + target_index`이며, policy가 "무엇을 할지"뿐 아니라
+"graph의 어느 요소에 할지"까지 선택합니다.
 
-각 step은 `action_mask`, `valid_action`, `affected_nodes`, `detection_risk`, 실제 graph
-`path_cost`를 `info`에 기록합니다. 목표 달성·자발적 중단은 `terminated`, budget 소진은
+| Action type | Target | In-process 상태 전이 |
+| --- | --- | --- |
+| `discover_host` | host | 도달 가능한 host에서 이어지는 edge로 대상 host 발견 |
+| `pivot_simulated_network` | host | 발견된 host를 reachable로 전환 (source host의 credential foothold 필요) |
+| `scan_service` | service | reachable host의 지정 service 확인 |
+| `enumerate_service` | service | service 상세 관찰 및 detection risk 반영 |
+| `validate_vulnerability` | vulnerability | 모델링된 weakness 검증 (확률적) |
+| `attempt_simulated_access` | access edge | access edge를 credential state로 전이 (확률적) |
+| `escalate_simulated_privilege` | privilege edge | privilege edge 적용 (확률적) |
+| `collect_simulated_objective` | objective | 조건을 만족한 objective 수집 |
+| `stop` | — | episode 자발적 종료 |
+
+각 step은 `action_mask`, `action_type`, `target`, `target_id`, `valid_action`, `outcome`,
+`affected_nodes`, `detection_risk`, `objective_captured`, `detected`, 실제 graph `path_cost`를
+`info`에 기록합니다. 목표 달성·detection·자발적 중단은 `terminated`, budget 소진은
 `truncated`입니다.
+
+### 확률적이지만 재현 가능한 전이
+
+`DynamicsConfig`가 exploitation 성공 확률, 실패 시 risk 증가, detection threshold를
+정의합니다. 모든 난수는 seed된 `np_random` stream에서 나오므로 **seed가 같으면 trajectory도
+같습니다**. `detection_risk`가 threshold를 넘으면 episode는 실패로 종료됩니다.
+
+```python
+from rlattack.env import AttackPathEnv, DynamicsConfig
+
+env = AttackPathEnv(scenario, dynamics=DynamicsConfig.deterministic())  # 회귀 검증용
+env = AttackPathEnv(scenario, dynamics=DynamicsConfig(detection_threshold=0.7))
+```
 
 ## 아키텍처
 
@@ -254,10 +289,12 @@ flowchart LR
 | --- | --- |
 | `rlattack.scenario` | Pydantic schema, reference integrity, NetworkX 변환 |
 | `rlattack.generator` | size·difficulty·seed 기반 synthetic graph |
-| `rlattack.env` | deterministic Gymnasium transition과 action mask |
+| `rlattack.env` | targeted action space, 재현 가능한 확률적 transition, action mask |
 | `rlattack.agents` | Random, Greedy, Rule-based, Graph Oracle |
 | `rlattack.experiment` | episode trace와 dashboard view model의 단일 실행 엔진 |
-| `rlattack.evaluation` | 동일 seed 기반 benchmark metric |
+| `rlattack.evaluation` | 분산·신뢰구간을 포함한 generalization benchmark metric |
+| `rlattack.policies` | 학습된 Stable-Baselines3 checkpoint의 Agent adapter |
+| `rlattack.export` | episode 단위 JSONL/CSV batch export |
 | `rlattack.explain` | action explanation과 visited-node overlay |
 | `rlattack.training` | optional Stable-Baselines3 DQN/PPO pipeline |
 | `rlattack.adapter` | live identifier를 거부하는 sanitized file adapter |
@@ -267,7 +304,8 @@ flowchart LR
 
 ## Benchmark와 reward
 
-내장 baseline은 동일한 scenario·seed·step budget에서 평가됩니다.
+내장 baseline은 동일한 seed 목록과 step budget에서 평가되며, **seed마다 scenario를 새로
+생성**하므로 결과는 하나의 고정 graph 재생이 아니라 generalization 성능입니다.
 
 - `Random`: 유효 action을 균등 표본화하는 하한선
 - `Greedy`: 목표·권한·접근·검증을 우선하는 진행 중심 policy
@@ -283,8 +321,19 @@ Reward strategy는 실험 목적에 따라 교체할 수 있습니다.
 | `risk-aware` | detection risk를 더 크게 감점 |
 | `cost-aware` | step과 중복 action 비용을 더 크게 감점 |
 
-공통 metric은 success rate, mean steps, cumulative reward, terminal detection risk,
-weighted graph path cost입니다. 전체 프로토콜과 한계는
+공통 metric은 success rate, detection rate, mean/std steps, cumulative reward와 95%
+신뢰구간, terminal detection risk, weighted graph path cost입니다. Episode 단위 원본
+record는 `rlattack benchmark --output`으로 내보내 외부에서 재분석할 수 있습니다.
+
+학습된 policy는 baseline과 같은 protocol에서 비교합니다.
+
+```bash
+rlattack train --algorithm ppo --timesteps 200000
+rlattack benchmark --episodes 64 --policy artifacts/policies/final.zip \
+  --policy-algorithm ppo
+```
+
+전체 프로토콜과 한계는
 [Experimental Methodology](docs/methodology.md)에 정리되어 있습니다.
 
 ## DQN / PPO 학습
@@ -309,14 +358,15 @@ make audit
 
 - Ruff lint + format
 - strict mypy
-- 67 deterministic tests
+- 118 tests (unit + reproducibility/solvability integration tests)
 - package statement coverage 100%
 - Gymnasium environment checker
 - FastAPI dashboard route와 loopback bind test
 - pip-audit dependency vulnerability check
 
-CI는 Python 3.12에서 동일한 gate를 실행하고, Dependabot이 Python·GitHub Actions dependency를
-매주 확인합니다.
+CI는 Python 3.10, 3.11, 3.12, 3.13에서 동일한 gate를 실행하고, Dependabot이 Python·GitHub
+Actions dependency를 매주 확인합니다. Optional DQN/PPO CPU smoke training은 별도
+`training-smoke` workflow에서 주 1회 실행합니다.
 
 ## 안전 범위
 
@@ -348,11 +398,15 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 - [x] Sanitized ThreatGraph adapter
 - [x] CLI, portable HTML report, interactive dashboard
 - [x] Desktop and mobile dashboard verification
+- [x] Targeted action space (action type × graph target)
+- [x] Per-seed generalization benchmark with dispersion and confidence intervals
+- [x] Reproducible stochastic dynamics and detection-threshold termination
+- [x] Trained DQN/PPO checkpoint benchmarking through the shared Agent protocol
 
-현재 `v0.2.0`은 연구용 end-to-end workflow를 제공합니다. 실제 환경의 다양성을 합성 graph가
+현재 `v0.3.0`은 연구용 end-to-end workflow를 제공합니다. 실제 환경의 다양성을 합성 graph가
 완전히 대표하지 않으며, explainability output은 인과적 설명이나 보안 보장을 의미하지 않습니다.
-현재 검증된 v0.2.0 완성본은 GitHub 기본 브랜치 `main`에 반영되어 있으며, 다음 확장은 v0.3 연구
-계획으로 관리합니다.
+다음 확장 후보(부분 관측, 능동적 defender model, 다목적 시나리오)는
+[Roadmap](docs/roadmap.md)에서 관리합니다. 변경 이력은 [CHANGELOG](CHANGELOG.md)를 참고하세요.
 
 ## 문서
 
@@ -360,6 +414,7 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 - [Dashboard/API](docs/api.md)
 - [Experimental Methodology](docs/methodology.md)
 - [Threat Model](docs/threat-model.md)
+- [Changelog](CHANGELOG.md)
 - [Roadmap](docs/roadmap.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
