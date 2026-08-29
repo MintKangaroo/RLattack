@@ -40,6 +40,7 @@ from rlattack.experiment import (
 from rlattack.export import write_results
 from rlattack.game import play
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
+from rlattack.importers import import_scenario_file
 from rlattack.policies import Algorithm, load_policy
 from rlattack.report import write_dashboard_report, write_transfer_report
 from rlattack.reward import RewardStrategy
@@ -168,6 +169,19 @@ def build_parser() -> argparse.ArgumentParser:
     scenario.add_argument("--difficulty", choices=("easy", "medium", "hard"), default="hard")
     scenario.add_argument("--seed", type=int, default=42)
     scenario.add_argument("--output", type=Path, default=Path("artifacts/scenario.json"))
+
+    importer = commands.add_parser(
+        "import",
+        help="convert a published attack graph into a sanitized scenario",
+    )
+    importer.add_argument("--input", type=Path, required=True, help="GraphML, GML, or JSON")
+    importer.add_argument("--output", type=Path, default=Path("artifacts/imported.json"))
+    importer.add_argument("--scenario-id", help="scenario ID (default: derived from the filename)")
+    importer.add_argument(
+        "--topology-only",
+        action="store_true",
+        help="import only hosts and reachability, without a playable exploitation layer",
+    )
 
     dashboard = commands.add_parser("dashboard", help="start the interactive local dashboard")
     dashboard.add_argument("--host", default="127.0.0.1")
@@ -723,6 +737,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "dashboard":
         print(f"RLAttack dashboard: http://{args.host}:{args.port}")
         run_dashboard(host=args.host, port=args.port)
+        return 0
+    if args.command == "import":
+        imported = import_scenario_file(
+            args.input,
+            scenario_id=args.scenario_id,
+            synthesize_layers=not args.topology_only,
+        )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(imported.model_dump_json(indent=2), encoding="utf-8")
+        print("RLAttack scenario import")
+        print(f"  source    : {args.input}")
+        print(f"  hosts     : {len(imported.hosts)}  edges: {len(imported.network_edges)}")
+        print(f"  entry     : {imported.entry_host_ids[0]}")
+        print(f"  scenario  : {args.output.resolve()}")
         return 0
     if args.command == "scenario":
         generated = generate_scenario(

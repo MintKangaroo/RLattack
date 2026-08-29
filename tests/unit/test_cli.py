@@ -3,6 +3,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
+import networkx as nx
 import numpy as np
 import pytest
 
@@ -694,3 +695,50 @@ def test_cli_game_supports_the_contextual_defender(
 
     assert "defender policy  : contextual" in printed
     assert "settled on" not in printed, "a contextual defender has no single arm"
+
+
+def test_cli_imports_a_published_attack_graph(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    graph = nx.DiGraph()
+    graph.add_edges_from([("web", "app"), ("app", "db")])
+    source = tmp_path / "topology.graphml"
+    nx.write_graphml(graph, source)
+    output = tmp_path / "scenario.json"
+
+    assert cli.main(["import", "--input", str(source), "--output", str(output)]) == 0
+    imported = json.loads(output.read_text(encoding="utf-8"))
+    printed = capsys.readouterr().out
+
+    assert imported["id"] == "imported-topology"
+    assert len(imported["hosts"]) == 3
+    assert "app" not in output.read_text(encoding="utf-8").replace("host-", "")
+    assert "RLAttack scenario import" in printed
+
+
+def test_cli_can_import_topology_only(tmp_path: Path) -> None:
+    graph = nx.DiGraph()
+    graph.add_edge("a", "b")
+    source = tmp_path / "t.graphml"
+    nx.write_graphml(graph, source)
+    output = tmp_path / "scenario.json"
+
+    assert (
+        cli.main(
+            [
+                "import",
+                "--input",
+                str(source),
+                "--output",
+                str(output),
+                "--topology-only",
+                "--scenario-id",
+                "custom-id",
+            ]
+        )
+        == 0
+    )
+    imported = json.loads(output.read_text(encoding="utf-8"))
+
+    assert imported["id"] == "custom-id"
+    assert imported["services"] == []

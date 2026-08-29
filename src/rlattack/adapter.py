@@ -29,16 +29,18 @@ _FORBIDDEN_KEYS = {
 _IP_OR_URL = re.compile(r"(?:https?://|\b(?:\d{1,3}\.){3}\d{1,3}\b)", re.IGNORECASE)
 
 
-def _assert_sanitized(value: Any, path: str = "root") -> None:
+def assert_sanitized(value: Any, path: str = "root") -> None:
+    """Reject payloads carrying live target identifiers or actionable exploit material."""
+
     if isinstance(value, Mapping):
         for key, child in value.items():
             normalized = str(key).lower()
             if normalized in _FORBIDDEN_KEYS:
                 raise ValueError(f"unsanitized ThreatGraph field at {path}.{key}")
-            _assert_sanitized(child, f"{path}.{key}")
+            assert_sanitized(child, f"{path}.{key}")
     elif isinstance(value, (list, tuple)):
         for index, child in enumerate(value):
-            _assert_sanitized(child, f"{path}[{index}]")
+            assert_sanitized(child, f"{path}[{index}]")
     elif isinstance(value, str) and _IP_OR_URL.search(value):
         raise ValueError(f"live target identifier at {path}")
 
@@ -46,7 +48,7 @@ def _assert_sanitized(value: Any, path: str = "root") -> None:
 def import_sanitized_threatgraph(payload: Mapping[str, Any]) -> Scenario:
     """Convert an anonymized ThreatGraph export into a validated Scenario."""
 
-    _assert_sanitized(payload)
+    assert_sanitized(payload)
     raw_nodes = payload.get("nodes", [])
     raw_edges = payload.get("edges", [])
     if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list):
@@ -214,5 +216,5 @@ def export_sanitized_scenario(scenario: Scenario) -> dict[str, Any]:
             for edge in scenario.network_edges
         ],
     }
-    _assert_sanitized(exported)
+    assert_sanitized(exported)
     return exported
