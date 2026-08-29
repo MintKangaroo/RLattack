@@ -438,3 +438,58 @@ def test_cli_curriculum_training_carries_one_policy_across_stages(
     assert captured["stages"] == len(DEFAULT_CURRICULUM)
     assert captured["algorithm"] == "ppo"
     assert "curriculum" in capsys.readouterr().out
+
+
+def test_cli_transfer_writes_a_self_contained_report(tmp_path: Path) -> None:
+    report = tmp_path / "transfer.html"
+
+    assert (
+        cli.main(
+            [
+                "transfer",
+                "--agent",
+                "greedy",
+                "--episodes",
+                "2",
+                "--deterministic",
+                "--resamples",
+                "100",
+                "--output",
+                str(tmp_path / "t.jsonl"),
+                "--report",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    html = report.read_text(encoding="utf-8")
+
+    assert "__RLATTACK_TRANSFER__" in html
+    assert '"reference":"small/easy"' in html
+    assert '"significant"' in html
+
+
+def test_cli_transfer_report_omits_tests_for_an_unknown_reference(tmp_path: Path) -> None:
+    report = tmp_path / "transfer.html"
+
+    assert (
+        cli.main(
+            [
+                "transfer",
+                "--agent",
+                "greedy",
+                "--episodes",
+                "2",
+                "--deterministic",
+                "--compare-to",
+                "nobody",
+                "--output",
+                str(tmp_path / "t.jsonl"),
+                "--report",
+                str(report),
+            ]
+        )
+        == 0
+    )
+
+    assert '"comparisons":[]' in report.read_text(encoding="utf-8")

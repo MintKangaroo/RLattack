@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import cast
 
@@ -36,7 +37,7 @@ from rlattack.experiment import (
 from rlattack.export import write_results
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.policies import Algorithm, load_policy
-from rlattack.report import write_dashboard_report
+from rlattack.report import write_dashboard_report, write_transfer_report
 from rlattack.reward import RewardStrategy
 from rlattack.stats import compare_benchmarks
 from rlattack.training import (
@@ -208,6 +209,11 @@ def build_parser() -> argparse.ArgumentParser:
     transfer.add_argument("--policy-algorithm", choices=("dqn", "ppo"), default="ppo")
     transfer.add_argument("--output", type=Path, default=Path("artifacts/transfer.jsonl"))
     transfer.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    transfer.add_argument(
+        "--report",
+        type=Path,
+        help="optional self-contained HTML transfer table",
+    )
     _add_significance_arguments(transfer, default_reference="small/easy")
 
     train = commands.add_parser(
@@ -305,6 +311,52 @@ def _run_ablation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _transfer_view_model(
+    metrics: dict[str, BenchmarkMetrics],
+    config: ExperimentConfig,
+    policy_label: str,
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    """Build the view model behind the self-contained transfer report."""
+
+    comparisons = (
+        [
+            asdict(item) | {"significant": item.significant}
+            for item in compare_benchmarks(
+                metrics,
+                args.compare_to,
+                metric=args.metric,
+                alpha=args.alpha,
+                iterations=args.resamples,
+            )
+        ]
+        if args.compare_to in metrics
+        else []
+    )
+    return {
+        "policy": policy_label,
+        "reference": args.compare_to,
+        "seeds": list(benchmark_seeds(config)),
+        "stages": [
+            {key: value for key, value in asdict(metric).items() if key != "outcomes"}
+            for metric in metrics.values()
+        ],
+        "comparisons": comparisons,
+        "conditions": [
+            ["Dynamics", "stochastic" if config.stochastic else "deterministic"],
+            ["Defender", config.defender],
+            ["Discovery", config.discovery],
+            ["Reward", config.reward_strategy],
+            ["Metric", args.metric],
+        ],
+        "note": (
+            "Every class is evaluated on the same seed list, so the episodes are paired and "
+            "the difference column is a paired sign-flip permutation test against the "
+            f"'{args.compare_to}' class. Step budgets scale with scenario size."
+        ),
+    }
+
+
 def _stage_env_builder(
     stage: CurriculumStage, step_budget: int, observation_config: ObservationConfig
 ) -> Callable[[], StageEnv]:
@@ -365,6 +417,11 @@ def _run_transfer(args: argparse.Namespace) -> int:
         )
     _print_comparisons(metrics, args)
     print(f"  export    : {output}")
+    if args.report is not None:
+        report = write_transfer_report(
+            _transfer_view_model(metrics, config, label, args), args.report
+        )
+        print(f"  report    : {report}")
     return 0
 
 

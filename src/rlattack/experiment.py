@@ -127,6 +127,7 @@ class EpisodeResult:
     success: bool
     detected: bool
     defender_actions: int
+    defender_false_positives: int
     revoked_credentials: int
     terminated: bool
     truncated: bool
@@ -229,6 +230,7 @@ def run_episode(
         success=bool(info["objective_captured"]),
         detected=bool(info["detected"]),
         defender_actions=cast(int, info["defender_actions"]),
+        defender_false_positives=cast(int, info["defender_false_positives"]),
         revoked_credentials=cast(int, info["revoked_credentials"]),
         terminated=terminated,
         truncated=truncated,

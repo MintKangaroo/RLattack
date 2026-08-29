@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from rlattack.report import render_dashboard, write_dashboard_report
+from rlattack.report import (
+    render_dashboard,
+    render_transfer_report,
+    write_dashboard_report,
+    write_transfer_report,
+)
 
 
 def test_dashboard_html_embeds_safe_offline_data() -> None:
@@ -20,3 +25,39 @@ def test_dashboard_html_can_enable_api_and_write_report(tmp_path: Path) -> None:
     assert output.is_absolute()
     assert output.exists()
     assert "window.__RLATTACK_API__=true" in api_html
+
+
+def test_transfer_report_is_self_contained() -> None:
+    data = {
+        "policy": "ppo",
+        "reference": "small/easy",
+        "seeds": [1, 2],
+        "stages": [
+            {
+                "agent_name": "small/easy",
+                "success_rate": 1.0,
+                "detection_rate": 0.0,
+                "mean_steps": 20.0,
+                "std_steps": 1.0,
+                "mean_reward": 5.0,
+                "reward_ci_low": 4.0,
+                "reward_ci_high": 6.0,
+            }
+        ],
+        "comparisons": [],
+        "conditions": [["Defender", "passive"]],
+        "note": "paired across classes",
+    }
+
+    html = render_transfer_report(data)
+
+    assert "__RLATTACK_TRANSFER__" in html
+    assert "small/easy" in html
+    assert "http://" not in html.replace("http://www.w3.org", "")
+
+
+def test_transfer_report_is_written_to_disk(tmp_path: Path) -> None:
+    output = write_transfer_report({"policy": "greedy"}, tmp_path / "nested" / "transfer.html")
+
+    assert output.exists()
+    assert output.name == "transfer.html"
