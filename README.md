@@ -360,6 +360,8 @@ rlattack benchmark --episodes 64 --policy artifacts/policies/final.zip \
 rlattack transfer --policy artifacts/policies/final.zip --report artifacts/transfer.html
 ```
 
+공개된 결과와 재현 명령은 [Published results](docs/results.md)에 있습니다.
+
 > **Action masking이 필수입니다.** 각 상태에서 유효한 action은 전체의 1~2%뿐이라
 > (예: 288개 중 4개), masking 없이 학습하면 탐색 예산이 invalid action에 소모되고
 > 정책이 즉시 `stop`하도록 수렴합니다. 기본 algorithm이 `maskable-ppo`인 이유입니다.
@@ -449,6 +451,7 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 - [Dashboard/API](docs/api.md)
 - [Experimental Methodology](docs/methodology.md)
 - [Threat Model](docs/threat-model.md)
+- [Published results](docs/results.md)
 - [Changelog](CHANGELOG.md)
 - [Roadmap](docs/roadmap.md)
 - [Contributing](CONTRIBUTING.md)
