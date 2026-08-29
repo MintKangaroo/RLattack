@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
 
+from rlattack.defender import DefenderConfig
 from rlattack.env import (
     ACTION_NAMES,
     Action,
@@ -346,3 +347,78 @@ def test_exact_risk_can_be_exposed_for_analysis_runs() -> None:
 
     assert observation["detection_risk"].tolist() == [0.0]
     assert "alert_level" in observation
+
+
+def test_the_defender_is_passive_by_default() -> None:
+    env = deterministic_env()
+    env.reset(seed=1)
+
+    _, _, _, _, info = env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+
+    assert info["defender_action"] == "none"
+    assert info["defender_actions"] == 0
+
+
+def test_an_adaptive_defender_hardens_monitoring_and_revokes_credentials() -> None:
+    env = AttackPathEnv(
+        make_scenario(),
+        step_budget=40,
+        dynamics=DynamicsConfig.deterministic(),
+        defender=DefenderConfig(
+            enabled=True,
+            alert_threshold=0.0,
+            response_cooldown=1,
+            revocation_probability=1.0,
+            hardening_step=1.0,
+        ),
+    )
+    env.reset(seed=1)
+    for action_type, target in SUCCESS_PATH[:4]:
+        _, _, _, _, info = env.step(env.encode_action(action_type, target))
+
+    assert info["revoked_credentials"] >= 1
+    assert info["defender_action"] == "revoke_credential"
+
+    observation = env._observation()
+
+    assert int(observation["acquired_credentials"].sum()) == 0
+    assert int(observation["acquired_privileges"].sum()) == 0
+
+
+def test_hardening_raises_the_detection_cost_of_reached_hosts() -> None:
+    def enumeration_risk(defender: DefenderConfig) -> float:
+        env = AttackPathEnv(
+            make_scenario(),
+            dynamics=DynamicsConfig.deterministic(),
+            defender=defender,
+        )
+        env.reset(seed=1)
+        env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+        _, _, _, _, info = env.step(env.encode_action(Action.ENUMERATE_SERVICE, 0))
+        return float(info["detection_risk"])
+
+    hardened = DefenderConfig(
+        enabled=True,
+        alert_threshold=0.0,
+        response_cooldown=1,
+        revocation_probability=0.0,
+        hardening_step=1.0,
+    )
+
+    assert enumeration_risk(hardened) > enumeration_risk(DefenderConfig())
+
+
+def test_revocation_keeps_a_privilege_another_credential_still_grants() -> None:
+    scenario = make_scenario()
+    extra = scenario.credentials[0].model_copy(update={"id": "web-user-2"})
+    scenario = scenario.model_copy(update={"credentials": (*scenario.credentials, extra)})
+    env = AttackPathEnv(scenario, dynamics=DynamicsConfig.deterministic())
+    env.reset(seed=1)
+    for action_type, target in SUCCESS_PATH[:4]:
+        env.step(env.encode_action(action_type, target))
+    env._acquired_credentials[1] = 1
+
+    env._revoke_credential(0)
+
+    assert env._acquired_credentials.tolist()[:2] == [0, 1]
+    assert env._acquired_privileges[env._privilege_index["user"]] == 1

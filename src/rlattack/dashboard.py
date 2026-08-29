@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import Any, cast
 
 from rlattack import __version__
-from rlattack.experiment import AgentName, ExperimentConfig, build_dashboard_data
+from rlattack.experiment import (
+    AgentName,
+    DefenderMode,
+    ExperimentConfig,
+    build_dashboard_data,
+)
 from rlattack.generator import Difficulty, ScenarioSize
 from rlattack.report import render_dashboard
 from rlattack.reward import RewardStrategy
@@ -50,6 +55,7 @@ def create_app() -> Any:
         step_budget: int = 64,
         benchmark_episodes: int = 8,
         stochastic: bool = True,
+        defender: str = "passive",
     ) -> dict[str, object]:
         try:
             config = ExperimentConfig(
@@ -61,6 +67,7 @@ def create_app() -> Any:
                 step_budget=step_budget,
                 benchmark_episodes=benchmark_episodes,
                 stochastic=stochastic,
+                defender=cast(DefenderMode, defender),
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error

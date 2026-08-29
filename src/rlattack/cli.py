@@ -14,6 +14,7 @@ from rlattack.dashboard import run_dashboard
 from rlattack.env import AttackPathEnv, ObservationConfig
 from rlattack.experiment import (
     AgentName,
+    DefenderMode,
     ExperimentConfig,
     ObservationMode,
     build_dashboard_data,
@@ -59,6 +60,12 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
         choices=("scenario", "curriculum"),
         default="scenario",
         help="scenario-sized observations, or fixed capacities that transfer across sizes",
+    )
+    parser.add_argument(
+        "--defender",
+        choices=("passive", "adaptive"),
+        default="passive",
+        help="passive is the control condition; adaptive responds to the attacker",
     )
 
 
@@ -135,6 +142,7 @@ def _config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         benchmark_episodes=args.episodes,
         stochastic=not args.deterministic,
         observation=cast(ObservationMode, args.observation),
+        defender=cast(DefenderMode, args.defender),
     )
 
 
@@ -151,6 +159,7 @@ def _run_benchmark(args: argparse.Namespace) -> int:
     print("RLAttack generalization benchmark")
     print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
     print(f"  dynamics  : {'stochastic' if config.stochastic else 'deterministic'}")
+    print(f"  defender  : {config.defender}")
     for name, metric in metrics.items():
         print(
             f"  {name:<14} success={metric.success_rate:5.1%} "

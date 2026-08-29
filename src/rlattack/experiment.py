@@ -16,6 +16,7 @@ from rlattack.agents import (
     ShortestPathOracle,
     reset_agent,
 )
+from rlattack.defender import DefenderConfig
 from rlattack.env import AttackPathEnv, DynamicsConfig, ObservationConfig
 from rlattack.evaluation import BenchmarkMetrics, evaluate_agent
 from rlattack.explain import EpisodeTrace, explain_action
@@ -25,6 +26,7 @@ from rlattack.scenario import Scenario
 
 AgentName = Literal["random", "greedy", "rule-based", "shortest-path"]
 ObservationMode = Literal["scenario", "curriculum"]
+DefenderMode = Literal["passive", "adaptive"]
 
 MAX_STEP_BUDGET = 512
 MAX_BENCHMARK_EPISODES = 256
@@ -50,6 +52,7 @@ class ExperimentConfig:
     benchmark_episodes: int = 8
     stochastic: bool = True
     observation: ObservationMode = "scenario"
+    defender: DefenderMode = "passive"
 
     def __post_init__(self) -> None:
         if self.size not in {"small", "medium", "large"}:
@@ -70,11 +73,18 @@ class ExperimentConfig:
             raise ValueError(f"benchmark_episodes must be at most {MAX_BENCHMARK_EPISODES}")
         if self.observation not in ("scenario", "curriculum"):
             raise ValueError("observation must be scenario or curriculum")
+        if self.defender not in ("passive", "adaptive"):
+            raise ValueError("defender must be passive or adaptive")
 
     def dynamics(self) -> DynamicsConfig:
         """Return the transition-uncertainty configuration for this experiment."""
 
         return DynamicsConfig() if self.stochastic else DynamicsConfig.deterministic()
+
+    def defender_config(self) -> DefenderConfig:
+        """Return the defender condition: passive control, or adaptive treatment."""
+
+        return DefenderConfig.adaptive() if self.defender == "adaptive" else DefenderConfig()
 
     def observation_config(self) -> ObservationConfig:
         """Return the observation interface: scenario-sized, or fixed for transfer."""
@@ -107,6 +117,8 @@ class EpisodeResult:
     agent: AgentName
     success: bool
     detected: bool
+    defender_actions: int
+    revoked_credentials: int
     terminated: bool
     truncated: bool
     steps: int
@@ -140,6 +152,7 @@ def run_episode(
     reward_strategy: RewardStrategy = "shaped",
     dynamics: DynamicsConfig | None = None,
     observation_config: ObservationConfig | None = None,
+    defender: DefenderConfig | None = None,
 ) -> EpisodeResult:
     """Run one baseline episode and retain an explainable trajectory."""
 
@@ -150,6 +163,7 @@ def run_episode(
         reward_config=reward_config,
         dynamics=dynamics,
         observation_config=observation_config,
+        defender=defender,
     )
     agent = create_agent(agent_name, scenario, seed=seed)
     reset_agent(agent, seed=seed)
@@ -205,6 +219,8 @@ def run_episode(
         agent=agent_name,
         success=bool(info["objective_captured"]),
         detected=bool(info["detected"]),
+        defender_actions=cast(int, info["defender_actions"]),
+        revoked_credentials=cast(int, info["revoked_credentials"]),
         terminated=terminated,
         truncated=truncated,
         steps=cast(int, info["steps"]),
@@ -237,6 +253,7 @@ def run_benchmarks(
     reward_config = build_reward_config(config.reward_strategy)
     dynamics = config.dynamics()
     observation_config = config.observation_config()
+    defender = config.defender_config()
 
     def scenario_for(seed: int) -> Scenario:
         return generate_scenario(config.size, config.difficulty, seed)
@@ -248,6 +265,7 @@ def run_benchmarks(
             reward_config=reward_config,
             dynamics=dynamics,
             observation_config=observation_config,
+            defender=defender,
         )
 
     def agent_factory(name: AgentName) -> Callable[[int], Agent]:
@@ -280,6 +298,7 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
         reward_strategy=selected.reward_strategy,
         dynamics=selected.dynamics(),
         observation_config=selected.observation_config(),
+        defender=selected.defender_config(),
     )
     benchmarks = run_benchmarks(selected)
     metrics = [

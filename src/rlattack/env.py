@@ -11,6 +11,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from rlattack.defender import DefenderConfig, DefenderResponse, DefenderState, decide_response
 from rlattack.scenario import NetworkEdge, Scenario
 
 Observation = dict[str, np.ndarray[Any, Any]]
@@ -212,6 +213,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         reward_config: RewardConfig | None = None,
         dynamics: DynamicsConfig | None = None,
         observation_config: ObservationConfig | None = None,
+        defender: DefenderConfig | None = None,
     ) -> None:
         if step_budget < 1:
             raise ValueError("step_budget must be positive")
@@ -222,6 +224,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self.reward_config = reward_config or RewardConfig()
         self.dynamics = dynamics or DynamicsConfig()
         self.observation_config = observation_config or ObservationConfig()
+        self.defender = defender or DefenderConfig()
         self._host_index = {record.id: index for index, record in enumerate(scenario.hosts)}
         self._service_index = {record.id: index for index, record in enumerate(scenario.services)}
         self._vulnerability_index = {
@@ -321,6 +324,11 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._finished = False
         self._detected = False
         self._objective_captured = False
+        self._host_hardening = np.zeros(self._host_width, dtype=np.float32)
+        self._last_response_step = 0
+        self._defender_actions = 0
+        self._revoked_credentials = 0
+        self._last_defender_response = DefenderResponse()
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -335,6 +343,9 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "path_cost": self._path_cost,
             "steps": self._steps,
             "target_count": self.target_count,
+            "defender_action": "none",
+            "defender_actions": 0,
+            "revoked_credentials": 0,
             "objective_captured": False,
             "detected": False,
         }
@@ -395,6 +406,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         else:
             reward += self._apply(action_type, target)
         self._steps += 1
+        self._apply_defender()
         reward += self._detection_risk * self.reward_config.detection_risk
         if self._detection_risk >= self.dynamics.detection_threshold and not self._terminated:
             self._detected = True
@@ -413,6 +425,9 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "outcome": self._outcome,
             "detection_risk": self._detection_risk,
             "alert_level": self.alert_level(),
+            "defender_action": self._last_defender_response.name,
+            "defender_actions": self._defender_actions,
+            "revoked_credentials": self._revoked_credentials,
             "detected": self._detected,
             "objective_captured": self._objective_captured,
             "path_cost": self._path_cost,
@@ -635,6 +650,45 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
 
     # -------------------------------------------------------------- helpers
 
+    def _apply_defender(self) -> None:
+        """Let the simulated defender respond to the attacker's trajectory."""
+
+        response = decide_response(
+            self.defender,
+            DefenderState(
+                detection_risk=self._detection_risk,
+                steps_since_response=self._steps - self._last_response_step,
+                acquired_credentials=tuple(
+                    int(index) for index in np.flatnonzero(self._acquired_credentials)
+                ),
+            ),
+            self.np_random,
+        )
+        self._last_defender_response = response
+        if response.name == "none":
+            return
+        self._last_response_step = self._steps
+        self._defender_actions += 1
+        if response.harden:
+            self._host_hardening[np.flatnonzero(self._reachable_hosts)] += (
+                self.defender.hardening_step
+            )
+        if response.revoke_credential is not None:
+            self._revoke_credential(response.revoke_credential)
+
+    def _revoke_credential(self, index: int) -> None:
+        """Drop one simulated credential, and the privilege it alone granted."""
+
+        self._acquired_credentials[index] = 0
+        self._revoked_credentials += 1
+        privilege_id = self.scenario.credentials[index].privilege_id
+        still_granted = any(
+            self._acquired_credentials[other] and credential.privilege_id == privilege_id
+            for other, credential in enumerate(self.scenario.credentials)
+        )
+        if not still_granted:
+            self._acquired_privileges[self._privilege_index[privilege_id]] = 0
+
     def _raise_risk(self, increment: float) -> None:
         self._detection_risk = min(1.0, self._detection_risk + increment)
 
@@ -691,6 +745,10 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             for control in self.scenario.security_controls
             if host_id in control.host_ids
         ]
-        if not probabilities:
-            return 0.05
-        return max(0.02, (sum(probabilities) / len(probabilities)) * 0.15)
+        base = (
+            0.05
+            if not probabilities
+            else max(0.02, (sum(probabilities) / len(probabilities)) * 0.15)
+        )
+        hardening = float(self._host_hardening[self._host_index[host_id]])
+        return base * (1.0 + hardening)

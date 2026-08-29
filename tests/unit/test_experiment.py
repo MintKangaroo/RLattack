@@ -27,6 +27,7 @@ def test_experiment_config_validates_public_inputs() -> None:
         {"step_budget": 10_000},
         {"benchmark_episodes": 10_000},
         {"observation": "partial"},
+        {"defender": "chaotic"},
     )
     for values in invalid_values:
         with pytest.raises(ValueError):
@@ -111,6 +112,11 @@ def test_dashboard_data_uses_default_config() -> None:
 
     assert data["config"]["size"] == "medium"
     assert data["reward"]["strategy"] == "risk-aware"
+
+
+def test_defender_mode_selects_the_experimental_condition() -> None:
+    assert ExperimentConfig().defender_config().enabled is False
+    assert ExperimentConfig(defender="adaptive").defender_config().enabled is True
 
 
 def test_curriculum_observation_mode_fixes_the_interface_widths() -> None:
