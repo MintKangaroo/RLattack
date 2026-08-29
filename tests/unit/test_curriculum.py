@@ -12,6 +12,7 @@ from rlattack.curriculum import (
     CurriculumStage,
     StageEnv,
     evaluate_transfer,
+    scale_curriculum,
     stage_env_factory,
 )
 from rlattack.env import DynamicsConfig, ObservationConfig
@@ -122,3 +123,23 @@ def test_stage_env_delegates_the_action_mask_to_the_live_scenario() -> None:
 
     assert masks.dtype == np.bool_
     assert masks.tolist() == env.current.action_masks().tolist()
+
+
+def test_curriculum_budgets_scale_while_keeping_each_stage_share() -> None:
+    scaled = scale_curriculum(DEFAULT_CURRICULUM, 400_000)
+
+    assert sum(stage.timesteps for stage in scaled) == 400_000
+    assert [stage.label for stage in scaled] == [stage.label for stage in DEFAULT_CURRICULUM]
+    original = DEFAULT_CURRICULUM[0].timesteps / sum(s.timesteps for s in DEFAULT_CURRICULUM)
+    assert scaled[0].timesteps / 400_000 == pytest.approx(original)
+
+    tiny = scale_curriculum(DEFAULT_CURRICULUM, len(DEFAULT_CURRICULUM))
+
+    assert all(stage.timesteps == 1 for stage in tiny)
+
+
+def test_curriculum_scaling_inputs_are_validated() -> None:
+    with pytest.raises(ValueError, match="at least one curriculum stage"):
+        scale_curriculum((), 1000)
+    with pytest.raises(ValueError, match="at least one step per stage"):
+        scale_curriculum(DEFAULT_CURRICULUM, 2)

@@ -11,11 +11,13 @@ from typing import cast
 
 from rlattack import __version__
 from rlattack.agents import Agent
+from rlattack.conditions import CONTROL_LABEL, run_condition_sweep
 from rlattack.curriculum import (
     DEFAULT_CURRICULUM,
     CurriculumStage,
     StageEnv,
     evaluate_transfer,
+    scale_curriculum,
     stage_env_factory,
 )
 from rlattack.dashboard import run_dashboard
@@ -220,6 +222,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_significance_arguments(transfer, default_reference="small/easy")
 
+    conditions = commands.add_parser(
+        "conditions",
+        help="evaluate one policy across the defender x discovery condition grid",
+    )
+    _add_experiment_arguments(conditions)
+    conditions.add_argument(
+        "--policy",
+        type=Path,
+        help="optional local Stable-Baselines3 checkpoint; defaults to the --agent baseline",
+    )
+    conditions.add_argument(
+        "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
+    )
+    conditions.add_argument("--output", type=Path, default=Path("artifacts/conditions.jsonl"))
+    conditions.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    _add_significance_arguments(conditions, default_reference=CONTROL_LABEL)
+
     train = commands.add_parser(
         "train", help="train an optional Stable-Baselines3 policy on generated scenarios"
     )
@@ -245,6 +264,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--curriculum",
         action="store_true",
         help="train one policy across the staged scenario curriculum",
+    )
+    train.add_argument(
+        "--curriculum-timesteps",
+        type=int,
+        help="total curriculum budget, split across stages in their default proportions",
     )
     return parser
 
@@ -436,6 +460,44 @@ def _run_transfer(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_conditions(args: argparse.Namespace) -> int:
+    """Evaluate one policy across the defender x discovery grid."""
+
+    config = _config_from_args(args)
+    if args.policy is not None:
+        policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
+        label = args.policy_algorithm
+
+        def agent_factory(seed: int) -> Agent:
+            del seed
+            return policy
+    else:
+        label = config.agent
+
+        def agent_factory(seed: int) -> Agent:
+            return create_agent(
+                config.agent,
+                generate_scenario(config.size, config.difficulty, seed),
+                seed=seed,
+            )
+
+    metrics = run_condition_sweep(config, agent_factory)
+    output = write_results(metrics, args.output, args.format)
+    print("RLAttack condition sweep")
+    print(f"  policy    : {label}")
+    print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
+    for name, metric in metrics.items():
+        print(
+            f"  {name:<17} success={metric.success_rate:5.1%} "
+            f"detected={metric.detection_rate:5.1%} "
+            f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
+            f"reward={metric.mean_reward:7.2f}"
+        )
+    _print_comparisons(metrics, args)
+    print(f"  export    : {output}")
+    return 0
+
+
 def _run_training(args: argparse.Namespace) -> int:
     """Train one optional Stable-Baselines3 policy on generated scenarios."""
 
@@ -462,7 +524,11 @@ def _run_training(args: argparse.Namespace) -> int:
         )
 
     if args.curriculum:
-        stages = DEFAULT_CURRICULUM
+        stages = (
+            scale_curriculum(DEFAULT_CURRICULUM, args.curriculum_timesteps)
+            if args.curriculum_timesteps
+            else DEFAULT_CURRICULUM
+        )
         train_curriculum(
             [_stage_env_builder(stage, args.step_budget, observation_config) for stage in stages],
             [stage.timesteps for stage in stages],
@@ -526,6 +592,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_ablation(args)
     if args.command == "transfer":
         return _run_transfer(args)
+    if args.command == "conditions":
+        return _run_conditions(args)
     if args.command == "train":
         return _run_training(args)
 

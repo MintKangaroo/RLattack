@@ -502,3 +502,73 @@ def test_cli_masked_training_requires_the_curriculum(
 
     assert cli.main(["train", "--algorithm", "maskable-ppo", "--size", "small"]) == 1
     assert "--curriculum" in capsys.readouterr().out
+
+
+def test_cli_conditions_sweeps_the_treatment_grid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "conditions.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "conditions",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--agent",
+                "greedy",
+                "--episodes",
+                "4",
+                "--resamples",
+                "100",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert "RLAttack condition sweep" in printed
+    assert "adaptive/noisy" in printed
+    assert "paired vs passive/exact" in printed
+    assert {row["agent"] for row in rows} == {
+        "passive/exact",
+        "adaptive/exact",
+        "passive/noisy",
+        "adaptive/noisy",
+    }
+
+
+def test_cli_conditions_accepts_a_trained_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class StubAgent:
+        def predict(self, observation: object, info: dict[str, object]) -> np.int64:
+            return np.int64(int(Action.STOP) * int(cast(int, info["target_count"])))
+
+    monkeypatch.setattr(cli, "load_policy", lambda path, algorithm: StubAgent())
+
+    assert (
+        cli.main(
+            [
+                "conditions",
+                "--size",
+                "small",
+                "--episodes",
+                "2",
+                "--resamples",
+                "100",
+                "--policy",
+                str(tmp_path / "model.zip"),
+                "--output",
+                str(tmp_path / "c.jsonl"),
+            ]
+        )
+        == 0
+    )
+
+    assert "policy    : maskable-ppo" in capsys.readouterr().out
