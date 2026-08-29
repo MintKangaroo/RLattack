@@ -152,6 +152,12 @@ class StageEnv(gym.Env[Observation, np.int64]):
     def step(self, action: np.int64) -> tuple[Observation, float, bool, bool, dict[str, Any]]:
         return self._current.step(action)
 
+    def action_masks(self) -> np.ndarray[Any, np.dtype[np.bool_]]:
+        """Delegate the action mask so maskable algorithms see the live scenario."""
+
+        masks: np.ndarray[Any, np.dtype[np.bool_]] = self._current.action_masks()
+        return masks
+
 
 def evaluate_transfer(
     agent_factory: Callable[[int], Agent],

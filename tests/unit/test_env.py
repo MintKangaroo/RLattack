@@ -594,3 +594,13 @@ def test_probing_reopens_once_every_candidate_has_been_missed() -> None:
 def test_discovery_probability_is_validated() -> None:
     with pytest.raises(ValueError, match="discovery_probability"):
         DynamicsConfig(discovery_probability=0.0)
+
+
+def test_boolean_action_masks_are_exposed_for_maskable_learners() -> None:
+    env = deterministic_env()
+    _, info = env.reset(seed=1)
+
+    masks = env.action_masks()
+
+    assert masks.dtype == np.bool_
+    assert masks.tolist() == np.asarray(info["action_mask"]).astype(bool).tolist()

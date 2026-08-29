@@ -111,7 +111,19 @@ Scenario, Seed, Dynamics, Defender를 고정하고 Reward만 바꿔 Pairing을 �
 단, Heuristic Baseline은 Reward Signal을 사용하지 않으므로 행동 차이는 학습된 Policy에서만
 관측됩니다.
 
-### 5.3 전이 평가
+### 5.3 Action Masking
+
+Targeted Action Space에서는 각 상태에서 유효한 Action이 전체의 **1~2%** 수준입니다
+(예: 288개 중 4개). Masking 없이 학습하면 탐색 예산의 대부분이 Invalid Action에 소모되고,
+정책은 즉시 `stop`하는 것으로 수렴합니다. 실제로 마스킹 없는 PPO 100k Step 학습은 모든
+Scenario Class에서 4 Step 후 종료하는 퇴화 정책을 학습했습니다.
+
+따라서 학습에는 `sb3-contrib`의 `MaskablePPO`를 사용하고, Environment가
+`action_masks()`로 Boolean Mask를 노출합니다. 평가 시에도 동일한 Mask를 전달합니다.
+이는 Invalid Action을 사후에 교정하는 것이 아니라, Mask가 해당 정책의 **입력 인터페이스**
+이기 때문입니다. Mask 없이 학습한 정책(`dqn`, `ppo`)은 Mask 없이 평가합니다.
+
+### 5.4 전이 평가
 
 `rlattack transfer`는 하나의 Policy를 9개 (Size × Difficulty) Class 전체에서 공유 Seed로
 평가합니다. 이것이 가능하려면 모든 Class가 동일한 Observation·Action Space를 가져야 하며,
@@ -122,7 +134,7 @@ Step Budget은 Scenario 크기에 비례해 확장합니다. 그렇지 않으면
 (`DynamicsConfig.normalize_risk_by_size`). 정규화 이전에는 `large` Scenario가 단지 경로가
 길다는 이유만으로 도달 불가능했습니다.
 
-### 5.4 보고 지표
+### 5.5 보고 지표
 
 각 Agent에 대해 다음을 함께 보고합니다.
 

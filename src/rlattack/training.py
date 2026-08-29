@@ -188,14 +188,18 @@ def train_curriculum(  # pragma: no cover - exercised by the optional training j
     ``reset_num_timesteps=False``, so the run is a curriculum rather than a set of
     independent trainings. Every stage must expose the same observation and action
     space; use ``ObservationConfig.for_curriculum()`` to guarantee that.
+
+    ``maskable-ppo`` is usually the right choice here. Only a small fraction of the
+    targeted action space is valid in any state, so an unmasked learner spends its
+    exploration budget on invalid actions and converges on stopping immediately.
     """
 
     if len(env_factories) != len(stage_timesteps):
         raise ValueError("each stage needs its own timestep budget")
     if not env_factories:
         raise ValueError("at least one curriculum stage is required")
-    if algorithm not in ("dqn", "ppo"):
-        raise ValueError("algorithm must be 'dqn' or 'ppo'")
+    if algorithm not in ("dqn", "ppo", "maskable-ppo"):
+        raise ValueError("algorithm must be 'dqn', 'ppo', or 'maskable-ppo'")
 
     selected = config or PPOTrainingConfig()
     try:
@@ -206,6 +210,13 @@ def train_curriculum(  # pragma: no cover - exercised by the optional training j
         raise RuntimeError(
             "Curriculum training requires the optional '.[training]' dependencies"
         ) from error
+    if algorithm == "maskable-ppo":
+        try:
+            from sb3_contrib import MaskablePPO
+        except ImportError as error:
+            raise RuntimeError(
+                "Masked training requires the optional '.[training]' dependencies"
+            ) from error
 
     selected.output_dir.mkdir(parents=True, exist_ok=True)
     selected.tensorboard_log.mkdir(parents=True, exist_ok=True)
@@ -217,7 +228,9 @@ def train_curriculum(  # pragma: no cover - exercised by the optional training j
 
         env = DummyVecEnv([monitored])
         if model is None:
-            builder = DQN if algorithm == "dqn" else PPO
+            builder = {"dqn": DQN, "ppo": PPO}.get(algorithm)
+            if builder is None:
+                builder = MaskablePPO
             model = builder(
                 "MultiInputPolicy",
                 env,

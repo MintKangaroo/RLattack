@@ -425,6 +425,11 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         mask[Action.STOP, 0] = 1
         return mask.reshape(-1)
 
+    def action_masks(self) -> np.ndarray[Any, Any]:
+        """Return the mask as booleans, the shape ``sb3-contrib`` expects."""
+
+        return self.action_mask().astype(bool)
+
     def step(self, action: np.int64) -> tuple[Observation, float, bool, bool, dict[str, Any]]:
         if self._finished:
             raise RuntimeError("step() called after episode completion; call reset() first")

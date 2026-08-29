@@ -121,6 +121,10 @@ loopback 요청이 무제한 계산을 예약할 수 없습니다.
 protocol로 감쌉니다. Wrapper는 invalid action을 교정하지 **않습니다**. Policy가 학습한
 action space 그대로 평가해야 실제 성능을 보고할 수 있기 때문입니다.
 
+예외는 `maskable-ppo`입니다. 이 정책은 action mask를 **입력으로 받아 학습**되므로 mask가
+인터페이스의 일부이고, 평가 시에도 동일하게 전달합니다. 사후 교정이 아닙니다.
+Environment는 `action_masks()`로 boolean mask를 노출합니다.
+
 ## Data flow
 
 1. `ExperimentConfig`가 user input을 검증합니다.

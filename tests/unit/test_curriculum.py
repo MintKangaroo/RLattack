@@ -105,3 +105,14 @@ def test_transfer_accepts_an_explicit_observation_interface() -> None:
     channels = cast(spaces.Dict, factory(1).observation_space)
 
     assert cast(spaces.MultiBinary, channels.spaces["discovered_hosts"]).n == 3
+
+
+def test_stage_env_delegates_the_action_mask_to_the_live_scenario() -> None:
+    stage = CurriculumStage("small", "easy")
+    env = StageEnv(stage, (1, 2), stage_env_factory(stage))
+    env.reset(seed=0)
+
+    masks = env.action_masks()
+
+    assert masks.dtype == np.bool_
+    assert masks.tolist() == env.current.action_masks().tolist()

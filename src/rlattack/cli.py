@@ -179,7 +179,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="optional local Stable-Baselines3 checkpoint to benchmark alongside the baselines",
     )
-    benchmark.add_argument("--policy-algorithm", choices=("dqn", "ppo"), default="dqn")
+    benchmark.add_argument(
+        "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
+    )
     _add_significance_arguments(benchmark, default_reference="greedy")
 
     ablation = commands.add_parser(
@@ -206,7 +208,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="optional local Stable-Baselines3 checkpoint; defaults to the --agent baseline",
     )
-    transfer.add_argument("--policy-algorithm", choices=("dqn", "ppo"), default="ppo")
+    transfer.add_argument(
+        "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
+    )
     transfer.add_argument("--output", type=Path, default=Path("artifacts/transfer.jsonl"))
     transfer.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
     transfer.add_argument(
@@ -219,7 +223,12 @@ def build_parser() -> argparse.ArgumentParser:
     train = commands.add_parser(
         "train", help="train an optional Stable-Baselines3 policy on generated scenarios"
     )
-    train.add_argument("--algorithm", choices=("dqn", "ppo"), default="dqn")
+    train.add_argument(
+        "--algorithm",
+        choices=("dqn", "ppo", "maskable-ppo"),
+        default="maskable-ppo",
+        help="maskable-ppo respects the environment's action mask during training",
+    )
     train.add_argument("--size", choices=("small", "medium", "large"), default="medium")
     train.add_argument("--difficulty", choices=("easy", "medium", "hard"), default="hard")
     train.add_argument("--seed", type=int, default=42)
@@ -461,6 +470,9 @@ def _run_training(args: argparse.Namespace) -> int:
         labels = ", ".join(stage.label for stage in stages)
         print(f"Trained {args.algorithm} curriculum ({labels}) into {args.output_dir.resolve()}")
         return 0
+    if args.algorithm == "maskable-ppo":
+        print("Masked training requires --curriculum; rerun with --curriculum")
+        return 1
     if args.algorithm == "dqn":
         train_dqn(
             env_factory,

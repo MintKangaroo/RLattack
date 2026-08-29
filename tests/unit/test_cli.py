@@ -401,7 +401,7 @@ def test_cli_transfer_can_evaluate_a_trained_policy(
         == 0
     )
 
-    assert "policy    : ppo" in capsys.readouterr().out
+    assert "policy    : maskable-ppo" in capsys.readouterr().out
 
 
 def test_cli_curriculum_training_carries_one_policy_across_stages(
@@ -493,3 +493,12 @@ def test_cli_transfer_report_omits_tests_for_an_unknown_reference(tmp_path: Path
     )
 
     assert '"comparisons":[]' in report.read_text(encoding="utf-8")
+
+
+def test_cli_masked_training_requires_the_curriculum(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+
+    assert cli.main(["train", "--algorithm", "maskable-ppo", "--size", "small"]) == 1
+    assert "--curriculum" in capsys.readouterr().out

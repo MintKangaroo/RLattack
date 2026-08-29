@@ -38,6 +38,7 @@ rlattack = "rlattack.cli:main"
 
 [project.optional-dependencies]
 training = [
+  "sb3-contrib>=2.4,<3",
   "stable-baselines3>=2.4,<3",
   "tensorboard>=2.16,<3",
   "torch>=2.2,<3",

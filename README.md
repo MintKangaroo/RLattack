@@ -354,10 +354,15 @@ record는 `rlattack benchmark --output`으로 내보내 외부에서 재분석�
 학습된 policy는 baseline과 같은 protocol에서 비교합니다.
 
 ```bash
-rlattack train --algorithm ppo --timesteps 200000
+rlattack train --algorithm maskable-ppo --curriculum
 rlattack benchmark --episodes 64 --policy artifacts/policies/final.zip \
-  --policy-algorithm ppo
+  --policy-algorithm maskable-ppo
+rlattack transfer --policy artifacts/policies/final.zip --report artifacts/transfer.html
 ```
+
+> **Action masking이 필수입니다.** 각 상태에서 유효한 action은 전체의 1~2%뿐이라
+> (예: 288개 중 4개), masking 없이 학습하면 탐색 예산이 invalid action에 소모되고
+> 정책이 즉시 `stop`하도록 수렴합니다. 기본 algorithm이 `maskable-ppo`인 이유입니다.
 
 전체 프로토콜과 한계는
 [Experimental Methodology](docs/methodology.md)에 정리되어 있습니다.
