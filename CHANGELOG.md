@@ -3,6 +3,52 @@
 All notable changes to RLAttack are recorded here. The project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-29
+
+### Added
+
+- **Partial observability** (`ObservationConfig`). The agent observes a quantized
+  `alert_level` one-hot instead of the defender's exact suspicion score; the exact risk
+  stays in `info` for reporting, and `expose_exact_risk` puts it back for analysis runs.
+- **Fixed interface capacities.** `ObservationConfig.for_curriculum()` pads every
+  channel to a width that covers all generated classes, so the observation and action
+  spaces are identical for `small` and `large`. Previously the vector length told the
+  agent the network size before it discovered anything, and a policy trained on one
+  size could not be applied to another. Padding is inert - an integration test asserts
+  the trace, steps, and reward are unchanged.
+- **An adaptive defender** (`rlattack.defender`). Once accumulated risk crosses its
+  alert threshold, it hardens monitoring on every host the attacker has reached and can
+  revoke an acquired credential, forcing the attacker to re-earn that foothold.
+  `decide_response` is a pure function of a small `DefenderState`. Off by default: a
+  passive run is the control condition, `--defender adaptive` the treatment.
+- **Multi-objective episodes.** The environment tracks `collected_objectives` and ends
+  only once every objective is held; `hard` scenarios gain a second objective on a
+  mid-route host. The graph oracle plans a route chaining shortest paths through every
+  objective host, shallowest first.
+- **Paired significance testing** (`rlattack.stats`). Benchmarks pair episodes by seed,
+  so a sign-flip permutation test and a percentile bootstrap of the paired difference
+  apply directly - no normality assumption and no SciPy. Reported by
+  `rlattack benchmark --compare-to`, `rlattack ablation`, and `rlattack transfer`.
+- **Reward ablation** (`rlattack ablation`) holding scenario, seeds, dynamics, and
+  defender fixed so only the reward varies.
+- **Curriculum and transfer** (`rlattack.curriculum`). `rlattack transfer` evaluates one
+  policy over all nine size/difficulty classes on a shared seed list;
+  `rlattack train --curriculum` carries one policy across stages. `StageEnv` draws a
+  fresh scenario on every reset, so a stage teaches its class rather than one graph.
+
+### Changed
+
+- `steps_remaining` in the observation became `budget_fraction` in [0, 1]. As a Box
+  bounded by the step budget it broke the shared interface, because the budget scales
+  with scenario size. The absolute remaining steps moved to `info`.
+- Detection risk is normalized by network size (`normalize_risk_by_size`, on by
+  default). As an absolute budget of noisy actions it made `large` scenarios unwinnable
+  purely because they take more steps - the graph oracle scored 0/16 on every large
+  class. It now scores 19-38% there, and the remaining gap is a real generalization
+  gradient.
+- Curriculum stages scale the step budget with scenario size, so a transfer table does
+  not report budget exhaustion as a generalization failure.
+
 ## [0.3.0] - 2026-08-29
 
 ### Changed — research validity

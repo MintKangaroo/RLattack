@@ -41,14 +41,28 @@
 28. Run the quality gate on Python 3.10-3.13 and add a scheduled CPU training smoke
     workflow. (completed)
 
+## v0.4 - research protocol
+
+29. Restrict the observation to what an attacker could know: a quantized alert level
+    instead of the exact detection risk, and fixed capacities so the vector length no
+    longer reveals the network size. (completed)
+30. Add an adaptive defender that hardens monitoring and revokes credentials in
+    response to the attacker's accumulated risk. (completed)
+31. Support multi-objective episodes, and report reward ablations and benchmark
+    comparisons with paired significance tests. (completed)
+32. Add a scenario curriculum and a transfer evaluation across every size and
+    difficulty class. (completed)
+
 ## Next
 
-29. Partial observability: hide unvisited graph structure behind an observation model
-    instead of exposing the full binary state.
-30. An active defender model whose responses depend on the attacker's trajectory.
-31. Multi-objective scenarios and reward ablations reported with significance tests.
-32. A curriculum over scenario size and difficulty, with transfer measured on unseen
-    classes.
+33. Train and publish a DQN and a PPO curriculum policy, and report the transfer table
+    against the baselines with significance tests.
+34. Re-capture the dashboard screenshots, and surface the defender and transfer views
+    in the report.
+35. Model defender response latency and false positives, so evasion is a timing
+    problem rather than a threshold problem.
+36. Partially observable graph structure: reveal neighbours through a noisy scan model
+    rather than an exact adjacency check.
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

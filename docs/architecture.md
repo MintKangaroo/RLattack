@@ -18,7 +18,7 @@ Application              ▼
           └─────────────────┴──────────────┘
                          │
 Domain                   ▼
-  agents ─ reward ─ Gymnasium environment ─ scenario/generator
+  agents ─ reward ─ defender ─ Gymnasium environment ─ scenario/generator
                                                 ▲
                                                 │
                                       sanitized file adapter
@@ -56,6 +56,13 @@ network 상태를 읽지 않으므로 size·difficulty·seed가 같으면 같은
 - Discovery와 pivot의 분리: `discover_host`는 host를 알게 할 뿐이고,
   `pivot_simulated_network`가 reachability를 부여하며 source host의 credential
   foothold를 요구합니다. Service scan은 reachability를 전제로 합니다.
+- **Partial observability**: `ObservationConfig`가 agent가 볼 수 있는 것을 정의합니다.
+  기본적으로 정확한 detection risk 대신 양자화된 `alert_level`만 노출하며, 고정 capacity로
+  모든 channel을 padding해 vector 길이가 네트워크 크기를 누설하지 않게 합니다.
+  같은 capacity가 scenario class 간 policy 전이를 가능하게 합니다.
+- **Adaptive defender**: `DefenderConfig`가 켜지면 누적 risk가 임계값을 넘을 때 도달한
+  host의 탐지 민감도를 높이고 credential을 회수합니다. 기본값은 off(대조군)입니다.
+- **Multi-objective**: 모든 objective를 수집해야 episode가 종료됩니다.
 - `terminated`와 budget `truncated` 구분, `info["objective_captured"]`로 성공을 판정
 - Action이 영향을 준 sanitized node ID와 `target_id`
 - 실제로 진행한 network edge의 누적 weighted path cost
@@ -79,13 +86,20 @@ OS command, subprocess, socket, external SDK를 import하지 않습니다.
 
 `rlattack.export`는 episode 단위 결과를 JSONL/CSV로 내보내 외부 통계 분석에 사용합니다.
 
+`rlattack.stats`는 seed로 pairing된 episode에 대해 sign-flip permutation test와 percentile
+bootstrap을 수행합니다. 정규성 가정과 SciPy 의존이 없습니다.
+
+`rlattack.curriculum`은 scenario stage와 전이 평가를 제공합니다. `StageEnv`는 reset마다
+stage에서 새 scenario를 뽑습니다. Stable-Baselines3는 environment를 한 번만 만들기 때문에,
+그렇게 하지 않으면 stage가 class가 아니라 하나의 graph를 가르치게 됩니다.
+
 `rlattack.explain`은 action 당시의 observation과 실제 `affected_nodes`를 기록합니다.
 Graph overlay의 visited state도 이 node ID를 사용합니다.
 
 ## Presentation
 
-- `rlattack.cli`: scenario export, experiment report, benchmark export, optional
-  training, dashboard 실행
+- `rlattack.cli`: scenario export, experiment report, benchmark/ablation/transfer
+  export, optional training, dashboard 실행
 - `rlattack.report`: 외부 asset이 없는 self-contained HTML
 - `rlattack.dashboard`: FastAPI HTML, health, experiment endpoint
 

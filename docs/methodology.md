@@ -85,7 +85,44 @@ Reward 설정과 함께 Scenario ID, Seed, Environment 버전, Algorithm을 저�
 6. 학습된 Policy는 `rlattack.policies.SB3PolicyAgent`로 감싸 Baseline과 동일한
    Protocol에서 평가합니다. Wrapper는 Invalid Action을 교정하지 않습니다.
 
-### 5.1 보고 지표
+### 5.1 실험 조건
+
+모든 비교는 조건을 명시합니다.
+
+| 조건 | 값 |
+| --- | --- |
+| Dynamics | `stochastic` (기본) 또는 `deterministic` |
+| Defender | `passive` (대조군) 또는 `adaptive` (처치군) |
+| Observation | `scenario` 또는 `curriculum` (고정 capacity) |
+
+Defender는 기본적으로 꺼져 있습니다. 대조군 없이 처치군만 보고하는 것을 막기 위해서입니다.
+
+### 5.2 유의성 검정
+
+Benchmark는 모든 Agent를 동일한 Seed 목록으로 실행하므로 Episode가 **Paired**입니다.
+`rlattack.stats`는 이 Pairing을 이용합니다.
+
+- **Sign-flip Permutation Test**: 귀무가설 하에서 각 Seed의 차이 부호가 동등하다고 보고
+  양측 p-value를 계산합니다.
+- **Percentile Bootstrap**: Paired 차이의 평균에 대한 신뢰구간을 계산합니다.
+
+두 방법 모두 정규성을 가정하지 않으며 SciPy를 필요로 하지 않습니다. Reward Ablation은
+Scenario, Seed, Dynamics, Defender를 고정하고 Reward만 바꿔 Pairing을 유지합니다.
+단, Heuristic Baseline은 Reward Signal을 사용하지 않으므로 행동 차이는 학습된 Policy에서만
+관측됩니다.
+
+### 5.3 전이 평가
+
+`rlattack transfer`는 하나의 Policy를 9개 (Size × Difficulty) Class 전체에서 공유 Seed로
+평가합니다. 이것이 가능하려면 모든 Class가 동일한 Observation·Action Space를 가져야 하며,
+`ObservationConfig.for_curriculum()`이 이를 보장합니다.
+
+Step Budget은 Scenario 크기에 비례해 확장합니다. 그렇지 않으면 Budget 소진이 일반화 실패로
+잘못 보고됩니다. 같은 이유로 Detection Risk 증가량은 Host 수로 정규화합니다
+(`DynamicsConfig.normalize_risk_by_size`). 정규화 이전에는 `large` Scenario가 단지 경로가
+길다는 이유만으로 도달 불가능했습니다.
+
+### 5.4 보고 지표
 
 각 Agent에 대해 다음을 함께 보고합니다.
 
