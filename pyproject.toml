@@ -79,7 +79,12 @@ strict = true
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["stable_baselines3", "stable_baselines3.*"]
+module = [
+  "stable_baselines3",
+  "stable_baselines3.*",
+  "sb3_contrib",
+  "sb3_contrib.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
