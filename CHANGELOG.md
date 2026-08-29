@@ -29,7 +29,12 @@ All notable changes to RLAttack are recorded here. The project follows
   now states the conditions it ran under.
 - **`rlattack transfer --report`** writes a self-contained transfer table with paired
   significance tests against a reference class.
-- Published curriculum policies and their transfer table (see README).
+- Published curriculum policies and their results in `docs/results.md`: a MaskablePPO
+  curriculum matches the graph oracle's success and detection rate on `medium/hard`
+  (96.9% / 3.1%) and earns significantly more reward (+1.04, 95% CI [+0.11, +1.83],
+  p = 0.030) by taking quieter rather than shorter paths, and holds 87-100% on the
+  classes it trained on while trailing the oracle by 17-25 points on the held-out
+  `large` classes.
 
 ### Fixed
 

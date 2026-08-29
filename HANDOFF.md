@@ -72,6 +72,15 @@ rlattack transfer --policy artifacts/policies/mppo/final.zip \
 Checkpoint는 저장소에 커밋하지 않습니다(`artifacts/`는 gitignore). 위 명령으로 재생성합니다.
 100k step curriculum은 하한선이지 상한선이 아닙니다.
 
+### 학습 결과 요약 (`docs/results.md`에 전체 표)
+
+- `medium/hard` 32 seeds: MaskablePPO가 oracle과 동일한 96.9% 성공·3.1% 탐지,
+  보상은 유의하게 높음(+1.04, p=0.030). 경로가 더 **짧아서**가 아니라 더 **조용해서**입니다
+  (31.7 vs 27.3 steps).
+- 전이: 학습한 class에서 87~100%, held-out `large`에서 58~83%로 oracle(83~100%) 대비
+  17~25점 뒤처집니다.
+- 마스킹 없는 PPO와 DQN은 **둘 다** 9개 class 전부에서 4-step·성공률 0%로 퇴화했습니다.
+
 ## 다음 세션 시작 명령
 
 ```bash
