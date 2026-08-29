@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import networkx as nx
@@ -29,9 +30,21 @@ def reset_agent(agent: Agent, *, seed: int | None = None) -> None:
         reset(seed=seed)
 
 
-def _valid_actions(info: dict[str, object]) -> np.ndarray[Any, Any]:
+def target_count(info: dict[str, object]) -> int:
+    """Read the per-action target stride the environment published in ``info``."""
+
+    count = info.get("target_count")
+    if not isinstance(count, int) or count < 1:
+        raise ValueError("info must contain a positive target_count")
+    return count
+
+
+def valid_actions(info: dict[str, object]) -> np.ndarray[Any, Any]:
+    """Return the flat indices of every action currently allowed by the mask."""
+
     mask = np.asarray(info.get("action_mask"), dtype=np.int8)
-    if mask.shape != (len(Action),):
+    stride = target_count(info)
+    if mask.shape != (len(Action) * stride,):
         raise ValueError("info must contain an action_mask with one entry per action")
     valid = np.flatnonzero(mask)
     if len(valid) == 0:
@@ -39,9 +52,40 @@ def _valid_actions(info: dict[str, object]) -> np.ndarray[Any, Any]:
     return valid
 
 
+def _first_valid(
+    info: dict[str, object],
+    action_type: Action,
+    targets: Iterable[int] | None = None,
+) -> np.int64 | None:
+    """Return the lowest-index valid action of ``action_type``, optionally target-filtered."""
+
+    mask = np.asarray(info["action_mask"], dtype=np.int8)
+    stride = target_count(info)
+    offset = int(action_type) * stride
+    candidates = range(stride) if targets is None else targets
+    for target in candidates:
+        if 0 <= target < stride and mask[offset + target]:
+            return np.int64(offset + target)
+    return None
+
+
+def _first_valid_by_priority(
+    info: dict[str, object], priority: Sequence[Action]
+) -> np.int64 | None:
+    for action_type in priority:
+        action = _first_valid(info, action_type)
+        if action is not None:
+            return action
+    return None
+
+
 @dataclass
 class RandomAgent:
-    """Uniformly sample one action from the environment's valid-action mask."""
+    """Uniformly sample one valid action, preferring progress over stopping.
+
+    ``stop`` is excluded while any other action is available so that the baseline
+    measures undirected exploration instead of an immediate exit.
+    """
 
     seed: int = 0
 
@@ -56,13 +100,17 @@ class RandomAgent:
 
     def predict(self, observation: Observation, info: dict[str, object]) -> np.int64:
         del observation
-        valid = _valid_actions(info)
+        valid = valid_actions(info)
+        stop_offset = int(Action.STOP) * target_count(info)
+        progress = valid[valid < stop_offset]
+        if len(progress):
+            valid = progress
         return np.int64(self._rng.choice(valid))
 
 
 @dataclass
 class GreedyAgent:
-    """Choose the highest-priority currently valid progress action."""
+    """Choose the lowest-index target of the highest-priority valid action type."""
 
     priority: tuple[Action, ...] = (
         Action.COLLECT_SIMULATED_OBJECTIVE,
@@ -83,16 +131,16 @@ class GreedyAgent:
 
     def predict(self, observation: Observation, info: dict[str, object]) -> np.int64:
         del observation
-        valid = set(int(action) for action in _valid_actions(info))
-        for action in self.priority:
-            if int(action) in valid:
-                return np.int64(action)
-        raise RuntimeError("priority list does not cover the action space")
+        valid_actions(info)
+        action = _first_valid_by_priority(info, self.priority)
+        if action is None:
+            raise RuntimeError("priority list does not cover the action space")
+        return action
 
 
 @dataclass
 class RuleBasedAgent:
-    """Follow an explicit reconnaissance-to-objective action sequence."""
+    """Follow an explicit reconnaissance-to-objective action ordering."""
 
     rules: tuple[Action, ...] = (
         Action.DISCOVER_HOST,
@@ -113,22 +161,23 @@ class RuleBasedAgent:
 
     def predict(self, observation: Observation, info: dict[str, object]) -> np.int64:
         del observation
-        valid = set(int(action) for action in _valid_actions(info))
-        for action in self.rules:
-            if int(action) in valid:
-                return np.int64(action)
-        return np.int64(Action.STOP)
+        valid_actions(info)
+        action = _first_valid_by_priority(info, self.rules)
+        if action is None:
+            raise RuntimeError("rule list does not cover the action space")
+        return action
 
 
 @dataclass
 class ShortestPathOracle:
-    """Use the graph's shortest entry-to-objective path to guide pivot actions.
+    """Advance along the graph's shortest entry-to-objective host path.
 
-    The oracle sees the static simulated graph and is intended as an upper-bound baseline,
-    never as an adapter to a real target.
+    The oracle sees the static simulated graph and is an upper-bound baseline; it never
+    adapts to a real target.
     """
 
     scenario: Scenario
+    route: tuple[str, ...] = field(init=False)
 
     def __post_init__(self) -> None:
         if not self.scenario.hosts:
@@ -142,21 +191,58 @@ class ShortestPathOracle:
             if self.scenario.entry_host_ids
             else self.scenario.hosts[0].id
         )
+        objective = self.scenario.objectives[0]
         try:
             self.route = tuple(
-                node
-                for node in nx.shortest_path(
-                    graph.subgraph(hosts),
-                    entry_host,
-                    self.scenario.objectives[0].host_id,
-                )
+                nx.shortest_path(graph.subgraph(hosts), entry_host, objective.host_id)
             )
         except nx.NetworkXNoPath as error:
             raise ValueError("graph oracle requires a path to the objective") from error
+        self._host_index = {host.id: index for index, host in enumerate(self.scenario.hosts)}
+        self._route_indices = tuple(self._host_index[host_id] for host_id in self.route)
+        self._required_actions = {
+            host.id: self._required_for_host(host.id) for host in self.scenario.hosts
+        }
         self._objective_index = next(
             index
-            for index, host in enumerate(self.scenario.hosts)
-            if host.id == self.scenario.objectives[0].host_id
+            for index, record in enumerate(self.scenario.objectives)
+            if record.id == objective.id
+        )
+
+    def _credential_host(self, credential_id: str) -> str:
+        return next(
+            credential.host_id
+            for credential in self.scenario.credentials
+            if credential.id == credential_id
+        )
+
+    def _required_for_host(self, host_id: str) -> tuple[tuple[Action, tuple[int, ...]], ...]:
+        """Return only the steps needed to earn a foothold on ``host_id``.
+
+        Exploiting every service on a host is what makes the naive baselines trip the
+        detection threshold, so the oracle touches just the credential path.
+        """
+
+        access = tuple(
+            index
+            for index, edge in enumerate(self.scenario.access_edges)
+            if self._credential_host(edge.credential_id) == host_id
+        )
+        vulnerability_ids = {self.scenario.access_edges[index].vulnerability_id for index in access}
+        vulnerabilities = tuple(
+            index
+            for index, record in enumerate(self.scenario.vulnerabilities)
+            if record.id in vulnerability_ids
+        )
+        service_ids = {self.scenario.vulnerabilities[index].service_id for index in vulnerabilities}
+        services = tuple(
+            index for index, record in enumerate(self.scenario.services) if record.id in service_ids
+        )
+        return (
+            (Action.ATTEMPT_SIMULATED_ACCESS, access),
+            (Action.VALIDATE_VULNERABILITY, vulnerabilities),
+            (Action.ENUMERATE_SERVICE, services),
+            (Action.SCAN_SERVICE, services),
         )
 
     def reset(self, *, seed: int | None = None) -> None:
@@ -165,20 +251,40 @@ class ShortestPathOracle:
         del seed
 
     def predict(self, observation: Observation, info: dict[str, object]) -> np.int64:
-        valid = set(int(action) for action in _valid_actions(info))
-        discovered = observation["discovered_hosts"]
-        if not discovered[self._objective_index]:
-            return np.int64(
-                Action.PIVOT_SIMULATED_NETWORK
-                if int(Action.PIVOT_SIMULATED_NETWORK) in valid
-                else Action.DISCOVER_HOST
-            )
+        valid_actions(info)
+        collect = _first_valid(info, Action.COLLECT_SIMULATED_OBJECTIVE, (self._objective_index,))
+        if collect is not None:
+            return collect
+        escalate = _first_valid(info, Action.ESCALATE_SIMULATED_PRIVILEGE)
+        if escalate is not None:
+            return escalate
+        reachable = observation["reachable_hosts"]
+        for host_id, host_index in zip(self.route, self._route_indices, strict=True):
+            if reachable[host_index]:
+                action = self._advance_on_host(info, host_id)
+                if action is not None:
+                    return action
+                continue
+            action = _first_valid(info, Action.PIVOT_SIMULATED_NETWORK, (host_index,))
+            if action is None:
+                action = _first_valid(info, Action.DISCOVER_HOST, (host_index,))
+            if action is not None:
+                return action
         return GreedyAgent().predict(observation, info)
 
+    def _advance_on_host(self, info: dict[str, object], host_id: str) -> np.int64 | None:
+        """Exploit the current route host far enough to unlock the next pivot."""
 
-def action_name(action: int) -> str:
-    """Return a stable human-readable name for a baseline decision."""
+        for action_type, targets in self._required_actions[host_id]:
+            action = _first_valid(info, action_type, targets)
+            if action is not None:
+                return action
+        return None
 
-    if action < 0 or action >= len(ACTION_NAMES):
+
+def action_name(action_type: int) -> str:
+    """Return a stable human-readable name for one baseline action type."""
+
+    if action_type < 0 or action_type >= len(ACTION_NAMES):
         raise ValueError("action is outside the RLAttack action catalogue")
-    return ACTION_NAMES[action]
+    return ACTION_NAMES[action_type]

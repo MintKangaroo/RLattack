@@ -49,6 +49,7 @@ def create_app() -> Any:
         reward_strategy: str = "risk-aware",
         step_budget: int = 64,
         benchmark_episodes: int = 8,
+        stochastic: bool = True,
     ) -> dict[str, object]:
         try:
             config = ExperimentConfig(
@@ -59,6 +60,7 @@ def create_app() -> Any:
                 reward_strategy=cast(RewardStrategy, reward_strategy),
                 step_budget=step_budget,
                 benchmark_episodes=benchmark_episodes,
+                stochastic=stochastic,
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error

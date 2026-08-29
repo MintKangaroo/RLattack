@@ -94,13 +94,14 @@ def generate_scenario(
         Privilege(id="priv-user", name="simulated user", level=10),
         Privilege(id="priv-admin", name="simulated administrator", level=90),
     )
-    credentials = (
+    credentials = tuple(
         Credential(
-            id="cred-entry-user",
-            host_id=host_ids[0],
+            id=f"cred-{host_id}",
+            host_id=host_id,
             username="simulated-agent",
             privilege_id="priv-user",
-        ),
+        )
+        for host_id in host_ids
     )
     objectives = (
         Objective(
@@ -136,8 +137,12 @@ def generate_scenario(
         objectives=objectives,
         security_controls=security_controls,
         network_edges=network_edges,
-        access_edges=(
-            AccessEdge(vulnerability_id=f"vuln-{services[0].id}", credential_id="cred-entry-user"),
+        access_edges=tuple(
+            AccessEdge(
+                vulnerability_id=f"vuln-{host_id}-ssh",
+                credential_id=f"cred-{host_id}",
+            )
+            for host_id in host_ids
         ),
         privilege_edges=(
             PrivilegeEdge(source_privilege_id="priv-user", target_privilege_id="priv-admin"),

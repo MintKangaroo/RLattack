@@ -1,7 +1,8 @@
-"""Gymnasium environment for safe, deterministic attack-path simulation."""
+"""Gymnasium environment for safe, reproducible attack-path simulation."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
@@ -10,13 +11,17 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from rlattack.scenario import Scenario, Service, Vulnerability
+from rlattack.scenario import NetworkEdge, Scenario
 
 Observation = dict[str, np.ndarray[Any, Any]]
 
 
 class Action(IntEnum):
-    """Stable action IDs exposed by :class:`AttackPathEnv`."""
+    """Stable action-type IDs exposed by :class:`AttackPathEnv`.
+
+    A concrete environment action pairs one of these types with a target index; see
+    :meth:`AttackPathEnv.encode_action`.
+    """
 
     DISCOVER_HOST = 0
     SCAN_SERVICE = 1
@@ -41,6 +46,24 @@ ACTION_NAMES: tuple[str, ...] = (
     "stop",
 )
 
+TARGET_KINDS: tuple[str, ...] = (
+    "host",
+    "service",
+    "service",
+    "vulnerability",
+    "access_edge",
+    "privilege_edge",
+    "host",
+    "objective",
+    "none",
+)
+
+
+def _width(records: tuple[Any, ...]) -> int:
+    """Return a positive observation width; Gymnasium rejects zero-length binary spaces."""
+
+    return max(1, len(records))
+
 
 @dataclass(frozen=True)
 class RewardConfig:
@@ -51,23 +74,67 @@ class RewardConfig:
     validated_vulnerability: float = 1.0
     access: float = 2.0
     privilege_escalation: float = 3.0
+    pivot: float = 1.0
     objective: float = 10.0
     duplicate_or_invalid: float = -1.0
+    failed_attempt: float = -0.2
+    detected: float = -5.0
     detection_risk: float = -0.5
     step_cost: float = -0.01
 
 
+@dataclass(frozen=True)
+class DynamicsConfig:
+    """Transition uncertainty and detection rules for one experiment.
+
+    The environment stays reproducible: every random draw comes from the seeded
+    :attr:`gymnasium.Env.np_random` stream, so a seed fixes the whole trajectory.
+    """
+
+    stochastic: bool = True
+    base_success_probability: float = 0.75
+    minimum_success_probability: float = 0.35
+    detection_threshold: float = 0.9
+    failed_attempt_risk: float = 0.05
+    pivot_risk: float = 0.03
+
+    def __post_init__(self) -> None:
+        for name in ("base_success_probability", "minimum_success_probability"):
+            value = getattr(self, name)
+            if not 0.0 < value <= 1.0:
+                raise ValueError(f"{name} must be in (0, 1]")
+        if not 0.0 < self.detection_threshold <= 1.0:
+            raise ValueError("detection_threshold must be in (0, 1]")
+        for name in ("failed_attempt_risk", "pivot_risk"):
+            value = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [0, 1]")
+
+    @classmethod
+    def deterministic(cls) -> DynamicsConfig:
+        """Return dynamics where every valid action succeeds, for regression tests."""
+
+        return cls(stochastic=False)
+
+
 class AttackPathEnv(gym.Env[Observation, np.int64]):
-    """Deterministic in-memory attack graph environment.
+    """Reproducible in-memory attack graph environment.
 
     The environment never opens sockets, executes subprocesses, or invokes offensive
     tooling. Each action only updates arrays derived from a validated :class:`Scenario`.
+
+    Actions are ``action_type * target_count + target_index`` so that a policy chooses
+    *what* to do and *which* graph element to do it to.
     """
 
     metadata = {"render_modes": []}
 
     def __init__(
-        self, scenario: Scenario, step_budget: int = 50, reward_config: RewardConfig | None = None
+        self,
+        scenario: Scenario,
+        step_budget: int = 50,
+        reward_config: RewardConfig | None = None,
+        dynamics: DynamicsConfig | None = None,
     ) -> None:
         if step_budget < 1:
             raise ValueError("step_budget must be positive")
@@ -76,6 +143,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self.scenario = scenario
         self.step_budget = step_budget
         self.reward_config = reward_config or RewardConfig()
+        self.dynamics = dynamics or DynamicsConfig()
         self._host_index = {record.id: index for index, record in enumerate(scenario.hosts)}
         self._service_index = {record.id: index for index, record in enumerate(scenario.services)}
         self._vulnerability_index = {
@@ -87,33 +155,71 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._privilege_index = {
             record.id: index for index, record in enumerate(scenario.privileges)
         }
+        self._host_credentials: dict[str, tuple[int, ...]] = {
+            host.id: tuple(
+                index
+                for index, credential in enumerate(scenario.credentials)
+                if credential.host_id == host.id
+            )
+            for host in scenario.hosts
+        }
         self._entry_hosts = set(scenario.entry_host_ids or (scenario.hosts[0].id,))
-        self.action_space = spaces.Discrete(len(Action))
+        self.target_count = max(
+            len(scenario.hosts),
+            len(scenario.services),
+            len(scenario.vulnerabilities),
+            len(scenario.access_edges),
+            len(scenario.privilege_edges),
+            len(scenario.objectives),
+            1,
+        )
+        host_ids = tuple(record.id for record in scenario.hosts)
+        service_ids = tuple(record.id for record in scenario.services)
+        self._target_ids: tuple[tuple[str, ...], ...] = (
+            host_ids,
+            service_ids,
+            service_ids,
+            tuple(record.id for record in scenario.vulnerabilities),
+            tuple(
+                f"{edge.vulnerability_id}->{edge.credential_id}" for edge in scenario.access_edges
+            ),
+            tuple(
+                f"{edge.source_privilege_id}->{edge.target_privilege_id}"
+                for edge in scenario.privilege_edges
+            ),
+            host_ids,
+            tuple(record.id for record in scenario.objectives),
+            (),
+        )
+        self.action_space = spaces.Discrete(len(Action) * self.target_count)
         self.observation_space = spaces.Dict(
             {
-                "discovered_hosts": spaces.MultiBinary(len(scenario.hosts)),
-                "known_services": spaces.MultiBinary(len(scenario.services)),
-                "validated_vulnerabilities": spaces.MultiBinary(len(scenario.vulnerabilities)),
-                "acquired_credentials": spaces.MultiBinary(len(scenario.credentials)),
-                "acquired_privileges": spaces.MultiBinary(len(scenario.privileges)),
-                "reachable_hosts": spaces.MultiBinary(len(scenario.hosts)),
+                "discovered_hosts": spaces.MultiBinary(_width(scenario.hosts)),
+                "reachable_hosts": spaces.MultiBinary(_width(scenario.hosts)),
+                "known_services": spaces.MultiBinary(_width(scenario.services)),
+                "enumerated_services": spaces.MultiBinary(_width(scenario.services)),
+                "validated_vulnerabilities": spaces.MultiBinary(_width(scenario.vulnerabilities)),
+                "acquired_credentials": spaces.MultiBinary(_width(scenario.credentials)),
+                "acquired_privileges": spaces.MultiBinary(_width(scenario.privileges)),
                 "detection_risk": spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
                 "steps_remaining": spaces.Box(0.0, step_budget, shape=(1,), dtype=np.float32),
             }
         )
         self._reset_state()
 
+    # ------------------------------------------------------------------ state
+
     def _reset_state(self) -> None:
-        host_count = len(self.scenario.hosts)
+        host_count = _width(self.scenario.hosts)
         self._discovered_hosts = np.zeros(host_count, dtype=np.int8)
-        self._known_services = np.zeros(len(self.scenario.services), dtype=np.int8)
-        self._enumerated_services = np.zeros(len(self.scenario.services), dtype=np.int8)
-        self._validated_vulnerabilities = np.zeros(
-            len(self.scenario.vulnerabilities), dtype=np.int8
-        )
-        self._acquired_credentials = np.zeros(len(self.scenario.credentials), dtype=np.int8)
-        self._acquired_privileges = np.zeros(len(self.scenario.privileges), dtype=np.int8)
         self._reachable_hosts = np.zeros(host_count, dtype=np.int8)
+        self._known_services = np.zeros(_width(self.scenario.services), dtype=np.int8)
+        self._enumerated_services = np.zeros(_width(self.scenario.services), dtype=np.int8)
+        self._validated_vulnerabilities = np.zeros(
+            _width(self.scenario.vulnerabilities), dtype=np.int8
+        )
+        self._acquired_credentials = np.zeros(_width(self.scenario.credentials), dtype=np.int8)
+        self._acquired_privileges = np.zeros(_width(self.scenario.privileges), dtype=np.int8)
         for host_id in self._entry_hosts:
             index = self._host_index[host_id]
             self._discovered_hosts[index] = 1
@@ -121,9 +227,12 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._detection_risk = 0.0
         self._path_cost = 0.0
         self._affected_nodes: tuple[str, ...] = ()
+        self._outcome = "reset"
         self._steps = 0
         self._terminated = False
         self._finished = False
+        self._detected = False
+        self._objective_captured = False
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -136,246 +245,342 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "detection_risk": self._detection_risk,
             "path_cost": self._path_cost,
             "steps": self._steps,
+            "target_count": self.target_count,
+            "objective_captured": False,
+            "detected": False,
         }
+
+    # ----------------------------------------------------------------- action
+
+    def encode_action(self, action_type: int, target: int = 0) -> np.int64:
+        """Encode an ``(action_type, target)`` pair into one environment action."""
+
+        if not 0 <= action_type < len(Action):
+            raise ValueError("action_type is outside the RLAttack action catalogue")
+        if not 0 <= target < self.target_count:
+            raise ValueError("target is outside the scenario target range")
+        return np.int64(action_type * self.target_count + target)
+
+    def decode_action(self, action: int | np.int64) -> tuple[int, int]:
+        """Split one environment action back into ``(action_type, target)``."""
+
+        action_type, target = divmod(int(action), self.target_count)
+        if action_type >= len(Action):
+            raise ValueError("action is outside the RLAttack action catalogue")
+        return action_type, target
+
+    def action_mask(self) -> np.ndarray[Any, Any]:
+        """Return a flat boolean mask of the actions currently valid in the state."""
+
+        mask = np.zeros((len(Action), self.target_count), dtype=np.int8)
+        for index in self._discoverable_hosts():
+            mask[Action.DISCOVER_HOST, index] = 1
+        for index in self._pivotable_hosts():
+            mask[Action.PIVOT_SIMULATED_NETWORK, index] = 1
+        for index in self._scannable_services():
+            mask[Action.SCAN_SERVICE, index] = 1
+        for index in self._enumerable_services():
+            mask[Action.ENUMERATE_SERVICE, index] = 1
+        for index in self._validatable_vulnerabilities():
+            mask[Action.VALIDATE_VULNERABILITY, index] = 1
+        for index in self._accessible_edges():
+            mask[Action.ATTEMPT_SIMULATED_ACCESS, index] = 1
+        for index in self._escalatable_edges():
+            mask[Action.ESCALATE_SIMULATED_PRIVILEGE, index] = 1
+        for index in self._collectable_objectives():
+            mask[Action.COLLECT_SIMULATED_OBJECTIVE, index] = 1
+        mask[Action.STOP, 0] = 1
+        return mask.reshape(-1)
 
     def step(self, action: np.int64) -> tuple[Observation, float, bool, bool, dict[str, Any]]:
         if self._finished:
             raise RuntimeError("step() called after episode completion; call reset() first")
-        action_id = self._validate_action(action)
-        valid = bool(self.action_mask()[action_id])
+        action_type, target = self._validate_action(action)
+        mask = self.action_mask()
+        valid = bool(mask[action_type * self.target_count + target])
         self._affected_nodes = ()
+        self._outcome = "invalid"
         reward = self.reward_config.step_cost
         if not valid:
             reward += self.reward_config.duplicate_or_invalid
-        elif action_id == Action.DISCOVER_HOST:
-            reward += self._discover_host()
-        elif action_id == Action.SCAN_SERVICE:
-            reward += self._scan_service()
-        elif action_id == Action.ENUMERATE_SERVICE:
-            reward += self._enumerate_service()
-        elif action_id == Action.VALIDATE_VULNERABILITY:
-            reward += self._validate_vulnerability()
-        elif action_id == Action.ATTEMPT_SIMULATED_ACCESS:
-            reward += self._attempt_access()
-        elif action_id == Action.ESCALATE_SIMULATED_PRIVILEGE:
-            reward += self._escalate_privilege()
-        elif action_id == Action.PIVOT_SIMULATED_NETWORK:
-            reward += self._pivot_network()
-        elif action_id == Action.COLLECT_SIMULATED_OBJECTIVE:
-            reward += self._collect_objective()
-            self._terminated = True
-        elif action_id == Action.STOP:
-            self._terminated = True
+        else:
+            reward += self._apply(action_type, target)
         self._steps += 1
-        risk_penalty = self._detection_risk * self.reward_config.detection_risk
-        reward += risk_penalty
+        reward += self._detection_risk * self.reward_config.detection_risk
+        if self._detection_risk >= self.dynamics.detection_threshold and not self._terminated:
+            self._detected = True
+            self._terminated = True
+            self._outcome = "detected"
+            reward += self.reward_config.detected
         truncated = self._steps >= self.step_budget and not self._terminated
         self._finished = self._terminated or truncated
         info: dict[str, Any] = {
             "action_mask": self.action_mask(),
-            "action_name": ACTION_NAMES[action_id],
+            "action_name": ACTION_NAMES[action_type],
+            "action_type": action_type,
+            "target": target,
+            "target_id": self._target_id(action_type, target),
             "affected_nodes": self._affected_nodes,
+            "outcome": self._outcome,
             "detection_risk": self._detection_risk,
+            "detected": self._detected,
+            "objective_captured": self._objective_captured,
             "path_cost": self._path_cost,
             "steps": self._steps,
+            "target_count": self.target_count,
             "valid_action": valid,
         }
         return self._observation(), float(reward), self._terminated, truncated, info
 
-    def action_mask(self) -> np.ndarray[Any, Any]:
-        """Return a boolean mask of actions currently valid in the state."""
-
-        return np.array(
-            [
-                self._can_discover(),
-                self._can_scan(),
-                self._can_enumerate(),
-                self._can_validate(),
-                self._can_access(),
-                self._can_escalate(),
-                self._can_pivot(),
-                self._can_collect(),
-                True,
-            ],
-            dtype=np.int8,
-        )
-
-    def _validate_action(self, action: np.int64) -> int:
+    def _validate_action(self, action: np.int64) -> tuple[int, int]:
         if not self.action_space.contains(action):
-            raise ValueError(f"action must be an integer in [0, {len(Action) - 1}]")
-        return int(action)
-
-    def _observation(self) -> Observation:
-        return {
-            "discovered_hosts": self._discovered_hosts.copy(),
-            "known_services": self._known_services.copy(),
-            "validated_vulnerabilities": self._validated_vulnerabilities.copy(),
-            "acquired_credentials": self._acquired_credentials.copy(),
-            "acquired_privileges": self._acquired_privileges.copy(),
-            "reachable_hosts": self._reachable_hosts.copy(),
-            "detection_risk": np.array([self._detection_risk], dtype=np.float32),
-            "steps_remaining": np.array([self.step_budget - self._steps], dtype=np.float32),
-        }
-
-    def _host_has_discovered_service(self, service_id: str) -> bool:
-        return bool(self._discovered_hosts[self._host_index[self._service(service_id).host_id]])
-
-    def _service(self, service_id: str) -> Service:
-        return self.scenario.services[self._service_index[service_id]]
-
-    def _can_discover(self) -> bool:
-        return any(
-            not self._discovered_hosts[self._host_index[edge.target_host_id]]
-            for edge in self.scenario.network_edges
-            if self._discovered_hosts[self._host_index[edge.source_host_id]]
-        )
-
-    def _can_scan(self) -> bool:
-        return any(
-            not self._known_services[index] and self._host_has_discovered_service(service.id)
-            for index, service in enumerate(self.scenario.services)
-        )
-
-    def _can_enumerate(self) -> bool:
-        return bool(np.any(self._known_services & (1 - self._enumerated_services)))
-
-    def _can_validate(self) -> bool:
-        return any(
-            not self._validated_vulnerabilities[index]
-            and self._enumerated_services[
-                self._service_index[self._vulnerability(index).service_id]
-            ]
-            for index in range(len(self.scenario.vulnerabilities))
-        )
-
-    def _can_access(self) -> bool:
-        return any(
-            self._validated_vulnerabilities[self._vulnerability_index[edge.vulnerability_id]]
-            and not self._acquired_credentials[self._credential_index[edge.credential_id]]
-            for edge in self.scenario.access_edges
-        )
-
-    def _can_escalate(self) -> bool:
-        return any(
-            self._acquired_privileges[self._privilege_index[edge.source_privilege_id]]
-            and not self._acquired_privileges[self._privilege_index[edge.target_privilege_id]]
-            for edge in self.scenario.privilege_edges
-        )
-
-    def _can_pivot(self) -> bool:
-        return self._can_discover()
-
-    def _can_collect(self) -> bool:
-        return any(
-            self._discovered_hosts[self._host_index[objective.host_id]]
-            and (
-                objective.required_privilege_id is None
-                or self._acquired_privileges[self._privilege_index[objective.required_privilege_id]]
+            raise ValueError(
+                f"action must be an integer in [0, {len(Action) * self.target_count - 1}]"
             )
-            for objective in self.scenario.objectives
-        )
+        return self.decode_action(action)
 
-    def _discover_host(self) -> float:
-        for edge in self.scenario.network_edges:
-            target = self._host_index[edge.target_host_id]
+    def _apply(self, action_type: int, target: int) -> float:
+        if action_type == Action.DISCOVER_HOST:
+            return self._discover_host(target)
+        if action_type == Action.SCAN_SERVICE:
+            return self._scan_service(target)
+        if action_type == Action.ENUMERATE_SERVICE:
+            return self._enumerate_service(target)
+        if action_type == Action.VALIDATE_VULNERABILITY:
+            return self._validate_vulnerability(target)
+        if action_type == Action.ATTEMPT_SIMULATED_ACCESS:
+            return self._attempt_access(target)
+        if action_type == Action.ESCALATE_SIMULATED_PRIVILEGE:
+            return self._escalate_privilege(target)
+        if action_type == Action.PIVOT_SIMULATED_NETWORK:
+            return self._pivot_network(target)
+        if action_type == Action.COLLECT_SIMULATED_OBJECTIVE:
+            return self._collect_objective(target)
+        self._terminated = True
+        self._outcome = "stopped"
+        return 0.0
+
+    # ------------------------------------------------------------ validity
+
+    def _discoverable_hosts(self) -> Iterator[int]:
+        for index in range(len(self.scenario.hosts)):
+            if not self._discovered_hosts[index] and self._reachable_edges(index):
+                yield index
+
+    def _pivotable_hosts(self) -> Iterator[int]:
+        for index in range(len(self.scenario.hosts)):
             if (
-                self._discovered_hosts[self._host_index[edge.source_host_id]]
-                and not self._discovered_hosts[target]
+                self._discovered_hosts[index]
+                and not self._reachable_hosts[index]
+                and self._pivot_edges(index)
             ):
-                self._discovered_hosts[target] = 1
-                self._reachable_hosts[target] = 1
-                self._path_cost += edge.cost
-                self._affected_nodes = (edge.source_host_id, edge.target_host_id)
-                return self.reward_config.new_host
-        return self.reward_config.duplicate_or_invalid  # pragma: no cover
+                yield index
 
-    def _scan_service(self) -> float:
+    def _scannable_services(self) -> Iterator[int]:
         for index, service in enumerate(self.scenario.services):
-            if not self._known_services[index] and self._host_has_discovered_service(service.id):
-                self._known_services[index] = 1
-                self._affected_nodes = (service.host_id, service.id)
-                return self.reward_config.new_service
-        return self.reward_config.duplicate_or_invalid  # pragma: no cover
+            if (
+                not self._known_services[index]
+                and self._reachable_hosts[self._host_index[service.host_id]]
+            ):
+                yield index
 
-    def _enumerate_service(self) -> float:
-        candidates = np.flatnonzero(self._known_services & (1 - self._enumerated_services))
-        if len(candidates):
-            service = self.scenario.services[int(candidates[0])]
-            self._enumerated_services[candidates[0]] = 1
-            self._detection_risk = min(
-                1.0,
-                self._detection_risk + self._host_detection_increment(service.host_id),
-            )
-            self._affected_nodes = (service.host_id, service.id)
-            return 0.0
-        return self.reward_config.duplicate_or_invalid  # pragma: no cover
+    def _enumerable_services(self) -> Iterator[int]:
+        for index in range(len(self.scenario.services)):
+            if self._known_services[index] and not self._enumerated_services[index]:
+                yield index
 
-    def _validate_vulnerability(self) -> float:
+    def _validatable_vulnerabilities(self) -> Iterator[int]:
         for index, vulnerability in enumerate(self.scenario.vulnerabilities):
             service_index = self._service_index[vulnerability.service_id]
             if (
                 not self._validated_vulnerabilities[index]
                 and self._enumerated_services[service_index]
             ):
-                self._validated_vulnerabilities[index] = 1
-                self._affected_nodes = (vulnerability.service_id, vulnerability.id)
-                return self.reward_config.validated_vulnerability
-        return self.reward_config.duplicate_or_invalid  # pragma: no cover
+                yield index
 
-    def _attempt_access(self) -> float:
-        for edge in self.scenario.access_edges:
-            vulnerability = self._vulnerability_index[edge.vulnerability_id]
-            credential = self._credential_index[edge.credential_id]
+    def _accessible_edges(self) -> Iterator[int]:
+        for index, edge in enumerate(self.scenario.access_edges):
             if (
-                self._validated_vulnerabilities[vulnerability]
-                and not self._acquired_credentials[credential]
+                self._validated_vulnerabilities[self._vulnerability_index[edge.vulnerability_id]]
+                and not self._acquired_credentials[self._credential_index[edge.credential_id]]
             ):
-                self._acquired_credentials[credential] = 1
-                self._acquired_privileges[
-                    self._privilege_index[self.scenario.credentials[credential].privilege_id]
-                ] = 1
-                credential_record = self.scenario.credentials[credential]
-                self._affected_nodes = (
-                    edge.vulnerability_id,
-                    edge.credential_id,
-                    credential_record.host_id,
-                    credential_record.privilege_id,
-                )
-                return self.reward_config.access
-        return self.reward_config.duplicate_or_invalid  # pragma: no cover
+                yield index
 
-    def _escalate_privilege(self) -> float:
-        for edge in self.scenario.privilege_edges:
-            source = self._privilege_index[edge.source_privilege_id]
-            target = self._privilege_index[edge.target_privilege_id]
-            if self._acquired_privileges[source] and not self._acquired_privileges[target]:
-                self._acquired_privileges[target] = 1
-                self._affected_nodes = (edge.source_privilege_id, edge.target_privilege_id)
-                return self.reward_config.privilege_escalation
-        return self.reward_config.duplicate_or_invalid  # pragma: no cover
+    def _escalatable_edges(self) -> Iterator[int]:
+        for index, edge in enumerate(self.scenario.privilege_edges):
+            if (
+                self._acquired_privileges[self._privilege_index[edge.source_privilege_id]]
+                and not self._acquired_privileges[self._privilege_index[edge.target_privilege_id]]
+            ):
+                yield index
 
-    def _pivot_network(self) -> float:
-        return self._discover_host()
+    def _collectable_objectives(self) -> Iterator[int]:
+        for index, objective in enumerate(self.scenario.objectives):
+            if self._reachable_hosts[self._host_index[objective.host_id]] and (
+                objective.required_privilege_id is None
+                or self._acquired_privileges[self._privilege_index[objective.required_privilege_id]]
+            ):
+                yield index
 
-    def _collect_objective(self) -> float:
-        if self._can_collect():
-            objective = next(
-                objective
-                for objective in self.scenario.objectives
-                if self._discovered_hosts[self._host_index[objective.host_id]]
-                and (
-                    objective.required_privilege_id is None
-                    or self._acquired_privileges[
-                        self._privilege_index[objective.required_privilege_id]
-                    ]
-                )
-            )
-            self._affected_nodes = (objective.host_id, objective.id)
-            return self.reward_config.objective
-        return self.reward_config.duplicate_or_invalid  # pragma: no cover
+    def _reachable_edges(self, host_index: int) -> list[NetworkEdge]:
+        """Return every edge into ``host_index`` whose source host is reachable."""
 
-    def _vulnerability(self, index: int) -> Vulnerability:
-        return self.scenario.vulnerabilities[index]
+        host_id = self.scenario.hosts[host_index].id
+        return [
+            edge
+            for edge in self.scenario.network_edges
+            if edge.target_host_id == host_id
+            and self._reachable_hosts[self._host_index[edge.source_host_id]]
+        ]
+
+    def _pivot_edges(self, host_index: int) -> list[NetworkEdge]:
+        """Return edges into ``host_index`` from a reachable host we hold a foothold on."""
+
+        return [
+            edge
+            for edge in self._reachable_edges(host_index)
+            if self._has_foothold(edge.source_host_id)
+        ]
+
+    def _has_foothold(self, host_id: str) -> bool:
+        """A host grants a pivot when it models no credential or one we already hold."""
+
+        credentials = self._host_credentials[host_id]
+        if not credentials:
+            return True
+        return any(bool(self._acquired_credentials[index]) for index in credentials)
+
+    # ------------------------------------------------------------- handlers
+
+    def _discover_host(self, target: int) -> float:
+        edge = min(
+            self._reachable_edges(target),
+            key=lambda edge: (edge.cost, edge.source_host_id),
+        )
+        self._discovered_hosts[target] = 1
+        self._path_cost += edge.cost
+        self._affected_nodes = (edge.source_host_id, edge.target_host_id)
+        self._outcome = "success"
+        return self.reward_config.new_host
+
+    def _pivot_network(self, target: int) -> float:
+        edge = self._pivot_edges(target)[0]
+        self._reachable_hosts[target] = 1
+        self._raise_risk(self.dynamics.pivot_risk)
+        self._affected_nodes = (edge.source_host_id, edge.target_host_id)
+        self._outcome = "success"
+        return self.reward_config.pivot
+
+    def _scan_service(self, target: int) -> float:
+        service = self.scenario.services[target]
+        self._known_services[target] = 1
+        self._affected_nodes = (service.host_id, service.id)
+        self._outcome = "success"
+        return self.reward_config.new_service
+
+    def _enumerate_service(self, target: int) -> float:
+        service = self.scenario.services[target]
+        self._enumerated_services[target] = 1
+        self._raise_risk(self._host_detection_increment(service.host_id))
+        self._affected_nodes = (service.host_id, service.id)
+        self._outcome = "success"
+        return 0.0
+
+    def _validate_vulnerability(self, target: int) -> float:
+        vulnerability = self.scenario.vulnerabilities[target]
+        nodes = (vulnerability.service_id, vulnerability.id)
+        if not self._succeeds(vulnerability.exploitability):
+            return self._failed_attempt(nodes)
+        self._validated_vulnerabilities[target] = 1
+        self._affected_nodes = nodes
+        self._outcome = "success"
+        return self.reward_config.validated_vulnerability
+
+    def _attempt_access(self, target: int) -> float:
+        edge = self.scenario.access_edges[target]
+        credential_index = self._credential_index[edge.credential_id]
+        credential = self.scenario.credentials[credential_index]
+        nodes = (edge.vulnerability_id, edge.credential_id, credential.host_id)
+        exploitability = self.scenario.vulnerabilities[
+            self._vulnerability_index[edge.vulnerability_id]
+        ].exploitability
+        if not self._succeeds(exploitability):
+            return self._failed_attempt(nodes)
+        self._acquired_credentials[credential_index] = 1
+        self._acquired_privileges[self._privilege_index[credential.privilege_id]] = 1
+        self._affected_nodes = (*nodes, credential.privilege_id)
+        self._outcome = "success"
+        return self.reward_config.access
+
+    def _escalate_privilege(self, target: int) -> float:
+        edge = self.scenario.privilege_edges[target]
+        nodes = (edge.source_privilege_id, edge.target_privilege_id)
+        exploitability = (
+            self.scenario.vulnerabilities[
+                self._vulnerability_index[edge.vulnerability_id]
+            ].exploitability
+            if edge.vulnerability_id is not None
+            else None
+        )
+        if not self._succeeds(exploitability):
+            return self._failed_attempt(nodes)
+        self._acquired_privileges[self._privilege_index[edge.target_privilege_id]] = 1
+        self._affected_nodes = nodes
+        self._outcome = "success"
+        return self.reward_config.privilege_escalation
+
+    def _collect_objective(self, target: int) -> float:
+        objective = self.scenario.objectives[target]
+        self._affected_nodes = (objective.host_id, objective.id)
+        self._objective_captured = True
+        self._terminated = True
+        self._outcome = "objective"
+        return self.reward_config.objective
+
+    def _failed_attempt(self, nodes: tuple[str, ...]) -> float:
+        self._raise_risk(self.dynamics.failed_attempt_risk)
+        self._affected_nodes = nodes
+        self._outcome = "failed"
+        return self.reward_config.failed_attempt
+
+    # -------------------------------------------------------------- helpers
+
+    def _raise_risk(self, increment: float) -> None:
+        self._detection_risk = min(1.0, self._detection_risk + increment)
+
+    def _success_probability(self, exploitability: float | None) -> float:
+        if not self.dynamics.stochastic:
+            return 1.0
+        if exploitability is None or exploitability <= 0.0:
+            return self.dynamics.base_success_probability
+        return max(self.dynamics.minimum_success_probability, exploitability)
+
+    def _succeeds(self, exploitability: float | None) -> bool:
+        probability = self._success_probability(exploitability)
+        if probability >= 1.0:
+            return True
+        return bool(self.np_random.random() < probability)
+
+    def _target_id(self, action_type: int, target: int) -> str | None:
+        """Return the scenario ID addressed by one action, or ``None`` when unused."""
+
+        catalogue = self._target_ids[action_type]
+        if target >= len(catalogue):
+            return None
+        return catalogue[target]
+
+    def _observation(self) -> Observation:
+        return {
+            "discovered_hosts": self._discovered_hosts.copy(),
+            "reachable_hosts": self._reachable_hosts.copy(),
+            "known_services": self._known_services.copy(),
+            "enumerated_services": self._enumerated_services.copy(),
+            "validated_vulnerabilities": self._validated_vulnerabilities.copy(),
+            "acquired_credentials": self._acquired_credentials.copy(),
+            "acquired_privileges": self._acquired_privileges.copy(),
+            "detection_risk": np.array([self._detection_risk], dtype=np.float32),
+            "steps_remaining": np.array([self.step_budget - self._steps], dtype=np.float32),
+        }
 
     def _host_detection_increment(self, host_id: str) -> float:
         probabilities = [

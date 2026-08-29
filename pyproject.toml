@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rlattack"
-version = "0.2.0"
+version = "0.3.0"
 description = "A deterministic simulation observatory for reinforcement-learning attack paths."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -84,3 +84,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=rlattack --cov-report=term-missing --cov-fail-under=100"
 testpaths = ["tests"]
+markers = [
+  "training: optional CPU smoke training that needs the '.[training]' extras",
+]

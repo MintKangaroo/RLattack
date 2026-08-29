@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, cast
 
@@ -15,14 +16,17 @@ from rlattack.agents import (
     ShortestPathOracle,
     reset_agent,
 )
-from rlattack.env import ACTION_NAMES, AttackPathEnv
-from rlattack.evaluation import evaluate_agent
+from rlattack.env import AttackPathEnv, DynamicsConfig
+from rlattack.evaluation import BenchmarkMetrics, evaluate_agent
 from rlattack.explain import EpisodeTrace, explain_action
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.reward import RewardStrategy, build_reward_config
 from rlattack.scenario import Scenario
 
 AgentName = Literal["random", "greedy", "rule-based", "shortest-path"]
+
+MAX_STEP_BUDGET = 512
+MAX_BENCHMARK_EPISODES = 256
 
 AGENT_LABELS: dict[AgentName, str] = {
     "random": "Random",
@@ -43,6 +47,7 @@ class ExperimentConfig:
     reward_strategy: RewardStrategy = "risk-aware"
     step_budget: int = 64
     benchmark_episodes: int = 8
+    stochastic: bool = True
 
     def __post_init__(self) -> None:
         if self.size not in {"small", "medium", "large"}:
@@ -57,6 +62,15 @@ class ExperimentConfig:
             raise ValueError("step_budget must be positive")
         if self.benchmark_episodes < 1:
             raise ValueError("benchmark_episodes must be positive")
+        if self.step_budget > MAX_STEP_BUDGET:
+            raise ValueError(f"step_budget must be at most {MAX_STEP_BUDGET}")
+        if self.benchmark_episodes > MAX_BENCHMARK_EPISODES:
+            raise ValueError(f"benchmark_episodes must be at most {MAX_BENCHMARK_EPISODES}")
+
+    def dynamics(self) -> DynamicsConfig:
+        """Return the transition-uncertainty configuration for this experiment."""
+
+        return DynamicsConfig() if self.stochastic else DynamicsConfig.deterministic()
 
 
 @dataclass(frozen=True)
@@ -65,6 +79,8 @@ class EpisodeStep:
 
     step: int
     action: str
+    target_id: str | None
+    outcome: str
     valid: bool
     reward: float
     cumulative_reward: float
@@ -79,6 +95,7 @@ class EpisodeResult:
 
     agent: AgentName
     success: bool
+    detected: bool
     terminated: bool
     truncated: bool
     steps: int
@@ -110,11 +127,17 @@ def run_episode(
     seed: int = 0,
     step_budget: int = 64,
     reward_strategy: RewardStrategy = "shaped",
+    dynamics: DynamicsConfig | None = None,
 ) -> EpisodeResult:
     """Run one baseline episode and retain an explainable trajectory."""
 
     reward_config = build_reward_config(reward_strategy)
-    env = AttackPathEnv(scenario, step_budget=step_budget, reward_config=reward_config)
+    env = AttackPathEnv(
+        scenario,
+        step_budget=step_budget,
+        reward_config=reward_config,
+        dynamics=dynamics,
+    )
     agent = create_agent(agent_name, scenario, seed=seed)
     reset_agent(agent, seed=seed)
     observation, info = env.reset(seed=seed)
@@ -136,6 +159,8 @@ def run_episode(
             reward,
             previous_info,
             affected_nodes=affected_nodes,
+            target_id=cast("str | None", info["target_id"]),
+            outcome=cast(str, info["outcome"]),
         )
         trace.append(explanation)
         cumulative_reward += reward
@@ -143,6 +168,8 @@ def run_episode(
             EpisodeStep(
                 step=cast(int, info["steps"]),
                 action=explanation.action,
+                target_id=explanation.target_id,
+                outcome=explanation.outcome,
                 valid=cast(bool, info["valid_action"]),
                 reward=reward,
                 cumulative_reward=cumulative_reward,
@@ -160,11 +187,11 @@ def run_episode(
             )
         )
 
-    success = bool(terminated and records and records[-1].action == ACTION_NAMES[7])
     overlay = trace.graph_overlay(scenario)
     return EpisodeResult(
         agent=agent_name,
-        success=success,
+        success=bool(info["objective_captured"]),
+        detected=bool(info["detected"]),
         terminated=terminated,
         truncated=truncated,
         steps=cast(int, info["steps"]),
@@ -178,6 +205,53 @@ def run_episode(
     )
 
 
+def benchmark_seeds(config: ExperimentConfig) -> tuple[int, ...]:
+    """Return the evaluation seeds implied by one experiment configuration."""
+
+    return tuple(config.seed + offset for offset in range(config.benchmark_episodes))
+
+
+def run_benchmarks(
+    config: ExperimentConfig,
+    extra_agents: Mapping[str, Callable[[int], Agent]] | None = None,
+) -> dict[str, BenchmarkMetrics]:
+    """Benchmark every baseline over independently generated scenarios.
+
+    Each seed regenerates the scenario, so the result is a generalization benchmark
+    rather than a repeated replay of one fixed graph.
+    """
+
+    reward_config = build_reward_config(config.reward_strategy)
+    dynamics = config.dynamics()
+
+    def scenario_for(seed: int) -> Scenario:
+        return generate_scenario(config.size, config.difficulty, seed)
+
+    def env_factory(seed: int) -> AttackPathEnv:
+        return AttackPathEnv(
+            scenario_for(seed),
+            step_budget=config.step_budget,
+            reward_config=reward_config,
+            dynamics=dynamics,
+        )
+
+    def agent_factory(name: AgentName) -> Callable[[int], Agent]:
+        def build(seed: int) -> Agent:
+            return create_agent(name, scenario_for(seed), seed=seed)
+
+        return build
+
+    seeds = benchmark_seeds(config)
+    factories: dict[str, Callable[[int], Agent]] = {
+        agent_name: agent_factory(agent_name) for agent_name in AGENT_LABELS
+    }
+    factories.update(extra_agents or {})
+    return {
+        name: evaluate_agent(name, factory, env_factory, seeds)
+        for name, factory in factories.items()
+    }
+
+
 def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, Any]:
     """Build the deterministic view model consumed by HTML and JSON clients."""
 
@@ -189,23 +263,16 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
         seed=selected.seed,
         step_budget=selected.step_budget,
         reward_strategy=selected.reward_strategy,
+        dynamics=selected.dynamics(),
     )
-    evaluation_seeds = tuple(
-        selected.seed + offset for offset in range(selected.benchmark_episodes)
-    )
-    metrics = []
-    for agent_name in AGENT_LABELS:
-        metric = evaluate_agent(
-            agent_name,
-            create_agent(agent_name, scenario, seed=selected.seed),
-            lambda seed: AttackPathEnv(
-                scenario,
-                step_budget=selected.step_budget,
-                reward_config=build_reward_config(selected.reward_strategy),
-            ),
-            evaluation_seeds,
-        )
-        metrics.append({**asdict(metric), "label": AGENT_LABELS[agent_name]})
+    benchmarks = run_benchmarks(selected)
+    metrics = [
+        {
+            **{key: value for key, value in asdict(metric).items() if key != "outcomes"},
+            "label": AGENT_LABELS[cast(AgentName, name)],
+        }
+        for name, metric in benchmarks.items()
+    ]
 
     route = ShortestPathOracle(scenario).route
     visited = set(episode.visited_nodes)
@@ -244,7 +311,7 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
     ]
     reward_values = asdict(build_reward_config(selected.reward_strategy))
     return {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "config": asdict(selected),
         "scenario": {
             "id": scenario.id,
@@ -262,6 +329,14 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
             "agent_label": AGENT_LABELS[episode.agent],
         },
         "benchmarks": metrics,
+        "benchmark_protocol": {
+            "mode": "per-seed-scenario",
+            "seeds": list(benchmark_seeds(selected)),
+            "note": (
+                "Each benchmark episode regenerates the scenario from its own seed, so the "
+                "metrics measure generalization across graphs of the configured class."
+            ),
+        },
         "reward": {
             "strategy": selected.reward_strategy,
             "values": reward_values,

@@ -18,6 +18,8 @@ class ActionExplanation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     action: str
+    target_id: str | None = None
+    outcome: str = "unknown"
     valid: bool
     reasons: tuple[str, ...]
     observation_summary: dict[str, int | float]
@@ -34,15 +36,25 @@ def explain_action(
     info: dict[str, Any],
     *,
     affected_nodes: tuple[str, ...] = (),
+    target_id: str | None = None,
+    outcome: str = "unknown",
     action_probability: float | None = None,
     q_value: float | None = None,
 ) -> ActionExplanation:
-    """Explain an action from observable state only; no hidden target data is used."""
+    """Explain a flat environment action from observable state only.
 
-    if action < 0 or action >= len(ACTION_NAMES):
+    ``info`` must carry the environment's ``target_count`` so the flat action can be
+    split back into an action type and a graph target.
+    """
+
+    stride = info.get("target_count")
+    if not isinstance(stride, int) or stride < 1:
+        raise ValueError("info must contain a positive target_count")
+    action_type, _ = divmod(int(action), stride)
+    if action < 0 or action_type >= len(ACTION_NAMES):
         raise ValueError("action is outside the RLAttack action catalogue")
     mask = np.asarray(info.get("action_mask"), dtype=np.int8)
-    valid = bool(mask[action]) if mask.shape == (len(Action),) else False
+    valid = bool(mask[action]) if mask.shape == (len(Action) * stride,) else False
     discovered = int(np.sum(observation["discovered_hosts"]))
     services = int(np.sum(observation["known_services"]))
     privileges = int(np.sum(observation["acquired_privileges"]))
@@ -56,7 +68,9 @@ def explain_action(
         f"steps_remaining={budget:.0f}",
     )
     return ActionExplanation(
-        action=ACTION_NAMES[action],
+        action=ACTION_NAMES[action_type],
+        target_id=target_id,
+        outcome=outcome,
         valid=valid,
         reasons=reasons,
         observation_summary={

@@ -1,0 +1,27 @@
+name: Training smoke
+
+# Long-running RL training never runs on pull requests. This job installs the heavy
+# optional extras and runs a 64-step CPU smoke test so the DQN/PPO pipelines cannot
+# silently rot between releases.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev,training]"
+      - name: CPU smoke training
+        run: pytest tests/integration/test_training_smoke.py -m training --no-cov
