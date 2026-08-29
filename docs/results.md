@@ -139,6 +139,12 @@ rlattack benchmark --size medium --difficulty hard --episodes 32 \
   --output artifacts/benchmark.jsonl
 ```
 
+## Transfer report
+
+`rlattack transfer --report` writes a self-contained table:
+
+![Transfer report](assets/transfer.png)
+
 ## Limitations
 
 - 100k timesteps is a floor, not a ceiling; no hyperparameter search was run.

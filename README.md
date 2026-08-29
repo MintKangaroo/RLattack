@@ -27,6 +27,7 @@
 <img src="docs/assets/dashboard-overview.png" alt="RLAttack Simulation Observatory overview">
 
 > 위 화면의 topology, reward, risk, benchmark, decision trace는 장식용 샘플이 아닙니다.
+> `rlattack demo --agent shortest-path --defender adaptive --seed 42` 실행 화면입니다.
 > `AttackPathEnv`를 seed `42`로 실제 실행해 생성한 결과입니다.
 
 ## 왜 RLAttack인가?
