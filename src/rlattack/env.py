@@ -293,6 +293,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "validated_vulnerabilities": spaces.MultiBinary(self._vulnerability_width),
             "acquired_credentials": spaces.MultiBinary(self._credential_width),
             "acquired_privileges": spaces.MultiBinary(self._privilege_width),
+            "collected_objectives": spaces.MultiBinary(self._objective_width),
             "alert_level": spaces.MultiBinary(config.alert_levels),
             "steps_remaining": spaces.Box(0.0, step_budget, shape=(1,), dtype=np.float32),
         }
@@ -311,6 +312,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._validated_vulnerabilities = np.zeros(self._vulnerability_width, dtype=np.int8)
         self._acquired_credentials = np.zeros(self._credential_width, dtype=np.int8)
         self._acquired_privileges = np.zeros(self._privilege_width, dtype=np.int8)
+        self._collected_objectives = np.zeros(self._objective_width, dtype=np.int8)
         for host_id in self._entry_hosts:
             index = self._host_index[host_id]
             self._discovered_hosts[index] = 1
@@ -347,6 +349,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "defender_actions": 0,
             "revoked_credentials": 0,
             "objective_captured": False,
+            "collected_objectives": 0,
             "detected": False,
         }
 
@@ -430,6 +433,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "revoked_credentials": self._revoked_credentials,
             "detected": self._detected,
             "objective_captured": self._objective_captured,
+            "collected_objectives": int(self._collected_objectives.sum()),
             "path_cost": self._path_cost,
             "steps": self._steps,
             "target_count": self.target_count,
@@ -521,6 +525,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
 
     def _collectable_objectives(self) -> Iterator[int]:
         for index, objective in enumerate(self.scenario.objectives):
+            if self._collected_objectives[index]:
+                continue
             if self._reachable_hosts[self._host_index[objective.host_id]] and (
                 objective.required_privilege_id is None
                 or self._acquired_privileges[self._privilege_index[objective.required_privilege_id]]
@@ -635,11 +641,15 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         return self.reward_config.privilege_escalation
 
     def _collect_objective(self, target: int) -> float:
+        """Collect one objective; the episode ends only once every objective is held."""
+
         objective = self.scenario.objectives[target]
+        self._collected_objectives[target] = 1
         self._affected_nodes = (objective.host_id, objective.id)
-        self._objective_captured = True
-        self._terminated = True
         self._outcome = "objective"
+        if int(self._collected_objectives.sum()) == len(self.scenario.objectives):
+            self._objective_captured = True
+            self._terminated = True
         return self.reward_config.objective
 
     def _failed_attempt(self, nodes: tuple[str, ...]) -> float:
@@ -732,6 +742,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "validated_vulnerabilities": self._validated_vulnerabilities.copy(),
             "acquired_credentials": self._acquired_credentials.copy(),
             "acquired_privileges": self._acquired_privileges.copy(),
+            "collected_objectives": self._collected_objectives.copy(),
             "alert_level": alert,
             "steps_remaining": np.array([self.step_budget - self._steps], dtype=np.float32),
         }

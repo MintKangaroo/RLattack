@@ -12,19 +12,23 @@ from rlattack import __version__
 from rlattack.agents import Agent
 from rlattack.dashboard import run_dashboard
 from rlattack.env import AttackPathEnv, ObservationConfig
+from rlattack.evaluation import BenchmarkMetrics
 from rlattack.experiment import (
+    REWARD_STRATEGIES,
     AgentName,
     DefenderMode,
     ExperimentConfig,
     ObservationMode,
     build_dashboard_data,
     run_benchmarks,
+    run_reward_ablation,
 )
 from rlattack.export import write_results
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.policies import Algorithm, load_policy
 from rlattack.report import write_dashboard_report
 from rlattack.reward import RewardStrategy
+from rlattack.stats import compare_benchmarks
 from rlattack.training import (
     DQNTrainingConfig,
     PPOTrainingConfig,
@@ -69,6 +73,50 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_significance_arguments(parser: argparse.ArgumentParser, *, default_reference: str) -> None:
+    parser.add_argument(
+        "--compare-to",
+        default=default_reference,
+        help="reference for the paired significance test",
+    )
+    parser.add_argument(
+        "--metric",
+        choices=("reward", "steps", "success"),
+        default="reward",
+        help="per-episode metric the significance test compares",
+    )
+    parser.add_argument("--alpha", type=float, default=0.05)
+    parser.add_argument(
+        "--resamples",
+        type=int,
+        default=2_000,
+        help="permutation and bootstrap iterations",
+    )
+
+
+def _print_comparisons(metrics: dict[str, BenchmarkMetrics], args: argparse.Namespace) -> None:
+    """Print paired significance tests against the chosen reference."""
+
+    if args.compare_to not in metrics:
+        print(f"  (skipping significance tests: unknown reference '{args.compare_to}')")
+        return
+    print(f"  paired vs {args.compare_to} on {args.metric} (alpha={args.alpha})")
+    for comparison in compare_benchmarks(
+        metrics,
+        args.compare_to,
+        metric=args.metric,
+        alpha=args.alpha,
+        iterations=args.resamples,
+    ):
+        marker = "*" if comparison.significant else " "
+        print(
+            f"  {marker} {comparison.candidate:<14} "
+            f"diff={comparison.mean_difference:+8.3f} "
+            f"CI=[{comparison.ci_low:+8.3f}, {comparison.ci_high:+8.3f}] "
+            f"p={comparison.p_value:.4f}"
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the public CLI parser."""
 
@@ -111,6 +159,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional local Stable-Baselines3 checkpoint to benchmark alongside the baselines",
     )
     benchmark.add_argument("--policy-algorithm", choices=("dqn", "ppo"), default="dqn")
+    _add_significance_arguments(benchmark, default_reference="greedy")
+
+    ablation = commands.add_parser(
+        "ablation", help="compare reward strategies for one agent on identical seeds"
+    )
+    _add_experiment_arguments(ablation)
+    ablation.add_argument(
+        "--strategies",
+        nargs="+",
+        choices=("sparse", "shaped", "risk-aware", "cost-aware"),
+        default=list(REWARD_STRATEGIES),
+    )
+    ablation.add_argument("--output", type=Path, default=Path("artifacts/ablation.jsonl"))
+    ablation.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    _add_significance_arguments(ablation, default_reference="shaped")
 
     train = commands.add_parser(
         "train", help="train an optional Stable-Baselines3 policy on generated scenarios"
@@ -168,6 +231,34 @@ def _run_benchmark(args: argparse.Namespace) -> int:
             f"reward={metric.mean_reward:7.2f} "
             f"[{metric.reward_ci_low:7.2f}, {metric.reward_ci_high:7.2f}]"
         )
+    _print_comparisons(metrics, args)
+    print(f"  export    : {output}")
+    return 0
+
+
+def _run_ablation(args: argparse.Namespace) -> int:
+    """Compare reward strategies for one agent on identical seeds."""
+
+    config = _config_from_args(args)
+    strategies = [cast(RewardStrategy, strategy) for strategy in args.strategies]
+    metrics = run_reward_ablation(config, strategies)
+    output = write_results(metrics, args.output, args.format)
+    print("RLAttack reward ablation")
+    print(f"  agent     : {config.agent}")
+    print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
+    print(f"  defender  : {config.defender}")
+    for name, metric in metrics.items():
+        print(
+            f"  {name:<14} success={metric.success_rate:5.1%} "
+            f"detected={metric.detection_rate:5.1%} "
+            f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
+            f"reward={metric.mean_reward:7.2f}"
+        )
+    print(
+        "  note      : baseline heuristics ignore the reward signal, so a behavioural"
+        " difference here requires a trained policy"
+    )
+    _print_comparisons(metrics, args)
     print(f"  export    : {output}")
     return 0
 
@@ -244,6 +335,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "benchmark":
         return _run_benchmark(args)
+    if args.command == "ablation":
+        return _run_ablation(args)
     if args.command == "train":
         return _run_training(args)
 

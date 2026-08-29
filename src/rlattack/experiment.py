@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, cast
 
@@ -27,6 +27,8 @@ from rlattack.scenario import Scenario
 AgentName = Literal["random", "greedy", "rule-based", "shortest-path"]
 ObservationMode = Literal["scenario", "curriculum"]
 DefenderMode = Literal["passive", "adaptive"]
+
+REWARD_STRATEGIES: tuple[RewardStrategy, ...] = ("sparse", "shaped", "risk-aware", "cost-aware")
 
 MAX_STEP_BUDGET = 512
 MAX_BENCHMARK_EPISODES = 256
@@ -282,6 +284,49 @@ def run_benchmarks(
     return {
         name: evaluate_agent(name, factory, env_factory, seeds)
         for name, factory in factories.items()
+    }
+
+
+def run_reward_ablation(
+    config: ExperimentConfig,
+    strategies: Sequence[RewardStrategy] = REWARD_STRATEGIES,
+) -> dict[str, BenchmarkMetrics]:
+    """Evaluate one agent under several reward strategies on identical seeds.
+
+    Everything except the reward is held fixed - same scenarios, same seeds, same
+    dynamics and defender - so the episodes stay paired and the strategies can be
+    compared with a paired significance test.
+    """
+
+    if not strategies:
+        raise ValueError("at least one reward strategy is required")
+    seeds = benchmark_seeds(config)
+    dynamics = config.dynamics()
+    observation_config = config.observation_config()
+    defender = config.defender_config()
+
+    def scenario_for(seed: int) -> Scenario:
+        return generate_scenario(config.size, config.difficulty, seed)
+
+    def env_factory(strategy: RewardStrategy) -> Callable[[int], AttackPathEnv]:
+        def build(seed: int) -> AttackPathEnv:
+            return AttackPathEnv(
+                scenario_for(seed),
+                step_budget=config.step_budget,
+                reward_config=build_reward_config(strategy),
+                dynamics=dynamics,
+                observation_config=observation_config,
+                defender=defender,
+            )
+
+        return build
+
+    def agent_factory(seed: int) -> Agent:
+        return create_agent(config.agent, scenario_for(seed), seed=seed)
+
+    return {
+        strategy: evaluate_agent(strategy, agent_factory, env_factory(strategy), seeds)
+        for strategy in strategies
     }
 
 

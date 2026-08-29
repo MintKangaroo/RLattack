@@ -103,7 +103,7 @@ def generate_scenario(
         )
         for host_id in host_ids
     )
-    objectives = (
+    objectives: tuple[Objective, ...] = (
         Objective(
             id="objective-final-host",
             name="collect simulated objective",
@@ -111,6 +111,17 @@ def generate_scenario(
             required_privilege_id="priv-admin",
         ),
     )
+    if difficulty == "hard" and host_count > 2:
+        # A second objective mid-route makes the episode multi-objective: the agent has
+        # to collect on the way through rather than beeline for the deepest host.
+        objectives += (
+            Objective(
+                id="objective-staging-host",
+                name="collect simulated staging objective",
+                host_id=host_ids[host_count // 2],
+                required_privilege_id="priv-user",
+            ),
+        )
     network_edges = _network_edges(host_ids, difficulty, rng)
     security_controls = tuple(
         SecurityControl(

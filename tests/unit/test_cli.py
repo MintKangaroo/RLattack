@@ -250,3 +250,93 @@ def test_cli_demo_reports_a_budget_limited_episode(
 
     assert "outcome  : incomplete" in output
     assert "dynamics : deterministic" in output
+
+
+def test_cli_benchmark_prints_paired_significance_tests(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        cli.main(
+            [
+                "benchmark",
+                "--size",
+                "small",
+                "--difficulty",
+                "hard",
+                "--episodes",
+                "6",
+                "--resamples",
+                "200",
+                "--compare-to",
+                "greedy",
+                "--metric",
+                "steps",
+                "--output",
+                str(tmp_path / "b.jsonl"),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+
+    assert "paired vs greedy on steps" in output
+    assert "shortest-path" in output
+
+
+def test_cli_skips_significance_tests_for_an_unknown_reference(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        cli.main(
+            [
+                "benchmark",
+                "--size",
+                "small",
+                "--episodes",
+                "2",
+                "--compare-to",
+                "nobody",
+                "--output",
+                str(tmp_path / "b.jsonl"),
+            ]
+        )
+        == 0
+    )
+
+    assert "unknown reference 'nobody'" in capsys.readouterr().out
+
+
+def test_cli_ablation_compares_reward_strategies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "ablation.csv"
+
+    assert (
+        cli.main(
+            [
+                "ablation",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--episodes",
+                "4",
+                "--strategies",
+                "sparse",
+                "shaped",
+                "--resamples",
+                "200",
+                "--format",
+                "csv",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+
+    assert "RLAttack reward ablation" in printed
+    assert "paired vs shaped on reward" in printed
+    assert "baseline heuristics ignore the reward signal" in printed
+    assert "sparse," in output.read_text(encoding="utf-8")

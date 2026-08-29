@@ -422,3 +422,50 @@ def test_revocation_keeps_a_privilege_another_credential_still_grants() -> None:
 
     assert env._acquired_credentials.tolist()[:2] == [0, 1]
     assert env._acquired_privileges[env._privilege_index["user"]] == 1
+
+
+def test_every_objective_must_be_collected_before_the_episode_ends() -> None:
+    scenario = make_scenario()
+    second = scenario.objectives[0].model_copy(
+        update={"id": "collect-staging", "host_id": "web", "required_privilege_id": "user"}
+    )
+    scenario = scenario.model_copy(update={"objectives": (*scenario.objectives, second)})
+    env = AttackPathEnv(scenario, step_budget=40, dynamics=DynamicsConfig.deterministic())
+    env.reset(seed=1)
+    for action_type, target in SUCCESS_PATH[:-1]:
+        env.step(env.encode_action(action_type, target))
+
+    _, _, terminated, _, info = env.step(env.encode_action(Action.COLLECT_SIMULATED_OBJECTIVE, 0))
+
+    assert terminated is False
+    assert info["objective_captured"] is False
+    assert info["collected_objectives"] == 1
+
+    _, _, terminated, _, info = env.step(env.encode_action(Action.COLLECT_SIMULATED_OBJECTIVE, 1))
+
+    assert terminated is True
+    assert info["objective_captured"] is True
+    assert info["collected_objectives"] == 2
+
+
+def test_a_collected_objective_cannot_be_collected_twice() -> None:
+    env = deterministic_env(step_budget=40)
+    env.reset(seed=1)
+    for action_type, target in SUCCESS_PATH[:-1]:
+        env.step(env.encode_action(action_type, target))
+    env.step(env.encode_action(Action.COLLECT_SIMULATED_OBJECTIVE, 0))
+    env.reset(seed=1)
+    for action_type, target in SUCCESS_PATH[:-1]:
+        env.step(env.encode_action(action_type, target))
+    mask = env.action_mask().reshape(len(Action), env.target_count)
+
+    assert mask[Action.COLLECT_SIMULATED_OBJECTIVE, 0] == 1
+
+    env.step(env.encode_action(Action.COLLECT_SIMULATED_OBJECTIVE, 0))
+
+    assert (
+        env.action_mask().reshape(len(Action), env.target_count)[
+            Action.COLLECT_SIMULATED_OBJECTIVE, 0
+        ]
+        == 0
+    )
