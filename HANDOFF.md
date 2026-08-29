@@ -1,42 +1,42 @@
 # RLAttack 인수인계
 
-> 다음 세션 시작점: 2026-08-29 기준 v0.8.0 작업본
+> 다음 세션 시작점: 2026-08-30 기준 v0.9.0 작업본
 
 ## 현재 상태
 
-- Package version: `0.8.0`
-- 작업 브랜치: `feat/v080-probe-memory` (PR #8–#12는 머지 완료, main이 v0.7.0)
+- Package version: `0.9.0`
+- 작업 브랜치: `feat/v090-exploration` (PR #8–#13 머지 완료, main이 v0.8.0)
 - 원격 저장소: <https://github.com/MintKangaroo/RLattack>
 - 실행 경계: synthetic graph와 in-process state transition만 허용
-- 품질 기준: Ruff, strict mypy, 254 tests, package coverage 100%
+- 품질 기준: Ruff, strict mypy, 264 tests, package coverage 100%
 
-## 이전 릴리스 요약 (PR #8–#12, 모두 머지됨)
+## 이전 릴리스 요약 (PR #8–#13, 모두 머지됨)
 
 - **v0.3** targeted action space, generalization benchmark, 확률적 dynamics
 - **v0.4** 부분 관측, 능동적 defender, 다목적 episode, paired 유의성 검정, 전이 평가
-- **v0.5** action masking 학습, defender 지연·노이즈, noisy discovery, 정책 결과 공개
-- **v0.6** 조건 격자 평가, 학습하는 defender, sweep, 400k 정책, 스크린샷 재촬영
-- **v0.7** 두 학습자 게임, 외부 graph import, noisy 학습의 정직한 음성 결과
+- **v0.5** action masking 학습, defender 지연·노이즈, noisy discovery
+- **v0.6** 조건 격자 평가, 학습하는 defender, sweep, 400k 정책
+- **v0.7** 두 학습자 게임, 외부 graph import, noisy 학습의 음성 결과
+- **v0.8** probe memory(0% → 6.2%), 균형 분석, 대응 예산, adversarial 학습
 
-## v0.8에서 바뀐 것
+## v0.9에서 바뀐 것
 
-1. **`probed_hosts` 관측 채널 (로드맵 50, 부분 해결)** — 어느 host를 probe해서 실패했는지가
-   action mask에만 있었고, maskable learner는 mask를 정책 입력이 아니라 분포 필터로만
-   씁니다. 즉 정책이 "다 훑어봤다"와 "아직 안 훑었다"를 구분할 수 없었습니다.
-   채널 추가 후 같은 400k 예산으로 재학습하니 noisy discovery 성공률이
-   **0% → 6.2%**로 올랐습니다. Oracle은 68.8%이므로 **격차는 좁혔을 뿐 닫지 못했습니다.**
-   관측 문제는 필요조건이었지 충분조건이 아니었고, 남은 거리는 여전히 탐색 문제입니다.
-   ⚠️ **관측 공간이 바뀌었으므로 이전 정책 체크포인트는 로드할 수 없습니다.**
-2. **균형 분석 (48)** — `rlattack equilibrium`이 정책 격자를 fictitious play로 풉니다.
-   medium/hard에서 균형은 순수 전략(shortest-path vs `fast`, 값 0.75)입니다.
-   shortest-path가 다른 모든 공격자 행을 지배하기 때문이고, 명령이 그 사실을 명시합니다.
-3. **Defender 대응 예산 (49)** — 에피소드당 대응 횟수 상한. 초과 결정은 버려지되 집계됩니다.
-   학습 defender는 `budget_pressure`를 읽고 배급합니다. **예산 8이 무제한보다 낫습니다**
-   (공격자 85.8%±2.6% vs 89.8%±4.6%) — 제약이 낭비를 막습니다.
-4. **Adversarial 학습 (47)** — `--adversarial`로 학습 중 defender가 함께 학습합니다.
-   SB3가 에피소드 루프를 소유하므로 `StageEnv.reset`에서 구동합니다.
-5. **Import 매핑 가이드 (46)** — `docs/importing.md`. 작성·검증 중 sanitizer 구멍을
-   발견해 고쳤습니다(일반 필드 안의 FQDN이 통과했습니다).
+1. **Held-out 구조 가족 (로드맵 54)** — `rlattack families`가 생성기가 만들 수 없는
+   star/tree/mesh/ring 토폴로지에서 평가합니다(import 경로를 그대로 씁니다).
+   **구조가 결과를 지배합니다** — noisy discovery, 8 hosts, 16 seeds에서 graph oracle이
+   star 100%, mesh 100%, chain 56.2%, **ring 12.5%**입니다. Ring은 자연스러운 진입점이
+   없고 최단 경로가 감기므로 oracle의 경로 지식이 값을 못 합니다.
+   ⚠️ **생성기 shape 하나의 성공률로 정책 역량을 말하면 안 됩니다.**
+2. **격자 확장은 혼합 균형을 만들지 못했습니다 (53, 음성 결과)** — 특화된 defender arm
+   2개(`harden-only`, `revoke-only`)와 넓게 가는 공격자(`shortest-path-broad`)를
+   추가했지만 균형은 여전히 순수합니다. 이유가 명확해졌습니다: **redundancy가 여기서는
+   trade-off가 아니라 그냥 손해**입니다(revoke-only 상대 43.8% vs 75.0%). 여분 credential을
+   얻는 추가 exploit의 노이즈가 이득을 넘습니다. 일반화하면 **detection risk가 모든 활동을
+   균일하게 벌하는 단일 스칼라라서, 더 많이 하는 전략은 언제나 더 나쁩니다.**
+   혼합 균형에는 defender의 주의가 **표적화**돼야 합니다(호스트별 감시를 우회 가능하게).
+   → 로드맵 55번.
+3. **`pivot-focused` 보상 전략 (51 진행 중)** — discover 0.2 / pivot 2.5로 보상 질량을
+   옮겼습니다. noisy 조건 학습 결과는 별도 측정 중입니다.
 
 ## 다음 세션 시작 명령
 
@@ -56,23 +56,22 @@ make audit
 rlattack demo
 rlattack benchmark --size medium --difficulty hard --episodes 64
 rlattack conditions --episodes 32 --policy artifacts/policies/<name>/final.zip
+rlattack families --agent shortest-path --discovery noisy --episodes 16
 rlattack transfer --episodes 32 --report artifacts/transfer.html
 rlattack equilibrium --episodes 16
 rlattack game --attacker bandit --rounds 200
 rlattack import --input topology.graphml --output artifacts/imported.json
 rlattack train --algorithm maskable-ppo --curriculum \
-  --curriculum-timesteps 400000 --discovery noisy      # .[training] 필요
-rlattack train --curriculum --adversarial
+  --curriculum-timesteps 400000 --discovery noisy --reward pivot-focused
 rlattack dashboard
 ```
 
 Dashboard: <http://127.0.0.1:8000>
 
-## 다음 확장 후보 (v0.9)
+## 다음 확장 후보 (v1.0)
 
-`docs/roadmap.md`의 51–54번입니다. 우선순위는 **51번(로드맵 50 마무리)** —
-남은 격차는 관측이 아니라 탐색이며, intrinsic novelty bonus나 pivot 성공에 대한 보상,
-또는 400k를 크게 넘는 예산이 후보입니다.
+`docs/roadmap.md`의 55–57번입니다. 우선순위는 **55번(표적화된 defender 주의)** —
+이것 없이는 정책 격자가 혼합 균형을 가질 수 없습니다.
 
 ## 구현 메모
 
