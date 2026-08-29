@@ -35,3 +35,10 @@ def test_ppo_config_shares_benchmark_contract() -> None:
         PPOTrainingConfig(rollout_steps=0)
     with pytest.raises(ValueError, match="batch_size"):
         PPOTrainingConfig(batch_size=0)
+
+
+def test_ppo_learning_knobs_are_validated() -> None:
+    with pytest.raises(ValueError, match="learning_rate"):
+        PPOTrainingConfig(learning_rate=0.0)
+    with pytest.raises(ValueError, match="entropy_coefficient"):
+        PPOTrainingConfig(entropy_coefficient=-0.1)

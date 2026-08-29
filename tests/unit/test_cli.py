@@ -7,8 +7,10 @@ import numpy as np
 import pytest
 
 from rlattack import cli
+from rlattack.agents import GreedyAgent
 from rlattack.curriculum import DEFAULT_CURRICULUM, StageEnv
 from rlattack.env import Action, AttackPathEnv
+from rlattack.training import PPOTrainingConfig
 
 
 def test_cli_prints_help_without_command(capsys: pytest.CaptureFixture[str]) -> None:
@@ -604,3 +606,62 @@ def test_cli_game_reports_the_defenders_learned_preference(
     assert "settled on" in printed
     assert len(rows) == 10
     assert rows[0]["episode"] == 0
+
+
+def test_cli_sweep_reports_missing_optional_dependencies(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: False)
+
+    assert cli.main(["sweep"]) == 1
+    assert "optional dependencies" in capsys.readouterr().out
+
+
+def test_cli_sweep_trains_and_benchmarks_each_trial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    trained: list[float] = []
+
+    def fake_train(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        trained.append(cast(PPOTrainingConfig, config).learning_rate)
+        assert algorithm == "maskable-ppo"
+
+    monkeypatch.setattr(cli, "train_curriculum", fake_train)
+    monkeypatch.setattr(cli, "load_policy", lambda path, algorithm: GreedyAgent())
+    output = tmp_path / "sweep.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "sweep",
+                "--trials",
+                "baseline",
+                "fast-lr",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--episodes",
+                "3",
+                "--curriculum-timesteps",
+                "8",
+                "--resamples",
+                "100",
+                "--output-dir",
+                str(tmp_path / "runs"),
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert trained == [3e-4, 1e-3]
+    assert "hyperparameter sweep" in printed
+    assert "paired vs baseline" in printed
+    assert {row["agent"] for row in rows} == {"baseline", "fast-lr"}

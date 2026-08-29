@@ -37,6 +37,8 @@ class PPOTrainingConfig(DQNTrainingConfig):
 
     rollout_steps: int = 256
     batch_size: int = 64
+    learning_rate: float = 3e-4
+    entropy_coefficient: float = 0.0
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -44,6 +46,10 @@ class PPOTrainingConfig(DQNTrainingConfig):
             raise ValueError("rollout_steps must be positive")
         if self.batch_size < 1:
             raise ValueError("batch_size must be positive")
+        if self.learning_rate <= 0.0:
+            raise ValueError("learning_rate must be positive")
+        if self.entropy_coefficient < 0.0:
+            raise ValueError("entropy_coefficient must not be negative")
 
 
 def training_dependencies_available() -> bool:
