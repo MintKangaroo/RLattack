@@ -1,6 +1,6 @@
 # Dashboard and API
 
-RLAttack `v0.7.0`은 simulation 결과를 탐색하는 local FastAPI dashboard를 제공합니다.
+RLAttack `v0.9.0`은 simulation 결과를 탐색하는 local FastAPI dashboard를 제공합니다.
 이 API가 실행하는 것은 검증된 `AttackPathEnv`뿐이며 scanner, shell, 외부 target client는
 포함하지 않습니다.
 
@@ -111,6 +111,16 @@ rlattack conditions --size medium --difficulty hard --episodes 32 \
 `defender × discovery` 격자 전체를 같은 seed로 평가하고 대조 조건 대비 paired 검정을
 출력합니다. **학습된 policy는 반드시 이 표와 함께 인용해야 합니다** — 학습한 조건 밖에서는
 성능이 보장되지 않습니다.
+
+## Held-out structural families
+
+```bash
+rlattack families --agent shortest-path --discovery noisy --episodes 16 --hosts 8
+```
+
+생성기가 만들 수 없는 star/tree/mesh/ring 토폴로지에서 평가합니다. 생성기 자신의 chain을
+기준으로 paired 검정을 붙입니다. **구조가 결과를 지배하므로**, 학습 정책 성능을 인용할 때는
+이 표를 함께 봐야 합니다.
 
 ## Two-player game
 

@@ -14,8 +14,11 @@ All notable changes to RLAttack are recorded here. The project follows
   ring** - worse on a held-out shape than on the one it was designed for. A single
   success rate on the generator's shape says little about a policy.
 - **`pivot-focused` reward strategy**, moving reward mass from discovery (1.0 to 0.2) to
-  pivoting (1.0 to 2.5), since paying per discovered host makes probing worth doing on
-  its own.
+  pivoting (1.0 to 2.5). Measured, it is **worse**: 0% success under noisy discovery
+  against 6.2% for `risk-aware`. Pivoting requires an already-discovered host, so
+  pricing discovery below its expected value makes the prerequisite unprofitable and the
+  reward it leads to unreachable. Kept as the recorded counter-example rather than a
+  recommended setting.
 - Two specializing defender arms (`harden-only`, `revoke-only`) and a broad attacker
   (`shortest-path-broad`) that takes the whole network rather than only its route.
 

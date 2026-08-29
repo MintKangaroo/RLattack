@@ -267,7 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     game = commands.add_parser(
         "game",
-        help="play a fixed attacker against a defender that adapts between episodes",
+        help="play an attacker against a defender that adapts between episodes",
     )
     _add_experiment_arguments(game)
     game.add_argument(

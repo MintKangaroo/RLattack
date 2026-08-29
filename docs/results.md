@@ -181,8 +181,31 @@ Adding a `probed_hosts` observation channel and retraining at the same 400k budg
 
 The channel moves success off zero and raises reward, so it was a real defect worth
 fixing - but 6.2% against the oracle's 68.8% means **the gap is narrowed, not closed**.
-The observability fix was necessary and is not sufficient; the remaining distance is
-still exploration, and 400k steps does not cover it.
+The observability fix was necessary and is not sufficient.
+
+### Reshaping the reward toward pivoting made it worse
+
+The next hypothesis was that the reward itself misprices the work: `new_host` pays 1.0
+per discovered host, so probing is worth doing on its own, while pivoting - which
+actually advances the attack - pays the same. `pivot-focused` moves the mass across
+(discovery 0.2, pivot 2.5, failed probe -0.3). Retrained at 400k under noisy discovery:
+
+| Reward | Success | Steps | Behaviour |
+| --- | --- | --- | --- |
+| `risk-aware` + probe memory | **6.2%** | 18.3 | probes, then stops |
+| `pivot-focused` + probe memory | **0.0%** | 18.1 | probes three times, then stops at step 12 |
+
+It is worse, and the trace says why. **Pivoting requires an already-discovered host.**
+A probe lands on an adjacent host perhaps a quarter of the time, so 0.2 per success
+against -0.3 per miss is a net loss - the prerequisite became unprofitable, and the
+reward it leads to unreachable. Rewarding the goal of a two-step sequence while
+penalizing its precondition removes the sequence.
+
+Two hypotheses tested, one small gain and one regression, and the gap to the oracle's
+68.8% is still open. What the pair rules out is that this is a simple mispricing: a
+shaped reward has to make the *prerequisite* pay for itself, or training has to be long
+enough for the value function to carry the pivot reward back to the probe that earns it.
+400k steps does not.
 
 ## Held-out structural families
 

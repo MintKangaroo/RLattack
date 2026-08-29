@@ -100,6 +100,11 @@
 ## v0.9 - held-out structure and strategic play
 
 51. Finish item 50 - close the remaining exploration gap under noisy discovery.
+    (**open**: two hypotheses tested. Probe memory gained 6.2 points; reshaping the
+    reward toward pivoting lost them again, because pivoting needs an already-discovered
+    host and pricing discovery below its expected value makes the prerequisite
+    unprofitable. Next: price discovery against the probe success rate, or train long
+    enough for the value function to carry the pivot reward back to the probe.)
 52. Report whether a policy trained against a learning defender transfers better than
     one trained against a fixed condition.
 53. Enrich the policy grid until the equilibrium is mixed. (**answered negatively**:

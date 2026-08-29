@@ -42,9 +42,15 @@ def build_reward_config(strategy: RewardStrategy) -> RewardConfig:
     if strategy == "cost-aware":
         return RewardConfig(step_cost=-0.2, duplicate_or_invalid=-1.5)
     if strategy == "pivot-focused":
-        # Discovery is cheap and pivoting is what actually advances the attack. Paying
-        # 1.0 per discovered host makes probing worthwhile on its own, which is how a
-        # policy under noisy discovery ends up sweeping instead of progressing.
+        # Pays for pivoting, which advances the attack, rather than for discovery, which
+        # on its own does not.
+        #
+        # Measured under noisy discovery it is *worse*, not better: 0% success against
+        # 6.2% for `risk-aware`. Pivoting requires an already-discovered host, so pricing
+        # discovery below its expected value (a probe lands on an adjacent host perhaps a
+        # quarter of the time, so 0.2 per success against -0.3 per miss is a net loss)
+        # makes the prerequisite unprofitable and the reward it leads to unreachable.
+        # Kept as the recorded counter-example, not as a recommended setting.
         return RewardConfig(
             new_host=0.2,
             pivot=2.5,
