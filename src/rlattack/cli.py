@@ -903,6 +903,63 @@ def _run_training(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_dashboard(args: argparse.Namespace) -> int:
+    """Serve the loopback-only dashboard."""
+
+    print(f"RLAttack dashboard: http://{args.host}:{args.port}")
+    run_dashboard(host=args.host, port=args.port)
+    return 0
+
+
+def _run_import(args: argparse.Namespace) -> int:
+    """Convert a published attack graph into a sanitized scenario file."""
+
+    imported = import_scenario_file(
+        args.input,
+        scenario_id=args.scenario_id,
+        synthesize_layers=not args.topology_only,
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(imported.model_dump_json(indent=2), encoding="utf-8")
+    print("RLAttack scenario import")
+    print(f"  source    : {args.input}")
+    print(f"  hosts     : {len(imported.hosts)}  edges: {len(imported.network_edges)}")
+    print(f"  entry     : {imported.entry_host_ids[0]}")
+    print(f"  scenario  : {args.output.resolve()}")
+    return 0
+
+
+def _run_scenario(args: argparse.Namespace) -> int:
+    """Export one generated scenario as JSON."""
+
+    generated = generate_scenario(
+        cast(ScenarioSize, args.size),
+        cast(Difficulty, args.difficulty),
+        args.seed,
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(generated.model_dump_json(indent=2), encoding="utf-8")
+    print(f"Scenario exported: {args.output.resolve()}")
+    return 0
+
+
+# Every subcommand except `demo`, which is the fall-through below.
+_COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "ablation": _run_ablation,
+    "benchmark": _run_benchmark,
+    "conditions": _run_conditions,
+    "dashboard": _run_dashboard,
+    "equilibrium": _run_equilibrium,
+    "families": _run_families,
+    "game": _run_game,
+    "import": _run_import,
+    "scenario": _run_scenario,
+    "sweep": _run_sweep,
+    "train": _run_training,
+    "transfer": _run_transfer,
+}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run a CLI command and return its process status."""
 
@@ -911,53 +968,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
-    if args.command == "dashboard":
-        print(f"RLAttack dashboard: http://{args.host}:{args.port}")
-        run_dashboard(host=args.host, port=args.port)
-        return 0
-    if args.command == "import":
-        imported = import_scenario_file(
-            args.input,
-            scenario_id=args.scenario_id,
-            synthesize_layers=not args.topology_only,
-        )
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(imported.model_dump_json(indent=2), encoding="utf-8")
-        print("RLAttack scenario import")
-        print(f"  source    : {args.input}")
-        print(f"  hosts     : {len(imported.hosts)}  edges: {len(imported.network_edges)}")
-        print(f"  entry     : {imported.entry_host_ids[0]}")
-        print(f"  scenario  : {args.output.resolve()}")
-        return 0
-    if args.command == "scenario":
-        generated = generate_scenario(
-            cast(ScenarioSize, args.size),
-            cast(Difficulty, args.difficulty),
-            args.seed,
-        )
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(generated.model_dump_json(indent=2), encoding="utf-8")
-        print(f"Scenario exported: {args.output.resolve()}")
-        return 0
-
-    if args.command == "benchmark":
-        return _run_benchmark(args)
-    if args.command == "ablation":
-        return _run_ablation(args)
-    if args.command == "transfer":
-        return _run_transfer(args)
-    if args.command == "conditions":
-        return _run_conditions(args)
-    if args.command == "game":
-        return _run_game(args)
-    if args.command == "sweep":
-        return _run_sweep(args)
-    if args.command == "equilibrium":
-        return _run_equilibrium(args)
-    if args.command == "families":
-        return _run_families(args)
-    if args.command == "train":
-        return _run_training(args)
+    handler = _COMMANDS.get(args.command)
+    if handler is not None:
+        return handler(args)
 
     config = _config_from_args(args)
     data = build_dashboard_data(config)

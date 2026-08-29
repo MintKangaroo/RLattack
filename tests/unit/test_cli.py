@@ -1009,3 +1009,15 @@ def test_cli_families_accepts_a_trained_policy(
     )
 
     assert "policy    : maskable-ppo" in capsys.readouterr().out
+
+
+def test_every_subcommand_has_a_handler() -> None:
+    """A new subcommand without a handler would fall through to `demo` silently."""
+
+    parser = cli.build_parser()
+    subparsers = parser._subparsers
+    assert subparsers is not None
+    declared = set(cast(Any, subparsers._group_actions[0]).choices)
+    handled = set(cli._COMMANDS) | {"demo"}
+
+    assert declared == handled
