@@ -68,7 +68,7 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--reward",
-        choices=("sparse", "shaped", "risk-aware", "cost-aware"),
+        choices=("sparse", "shaped", "risk-aware", "cost-aware", "pivot-focused"),
         default="risk-aware",
     )
     parser.add_argument("--step-budget", type=int, default=64)
@@ -211,7 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
     ablation.add_argument(
         "--strategies",
         nargs="+",
-        choices=("sparse", "shaped", "risk-aware", "cost-aware"),
+        choices=("sparse", "shaped", "risk-aware", "cost-aware", "pivot-focused"),
         default=list(REWARD_STRATEGIES),
     )
     ablation.add_argument("--output", type=Path, default=Path("artifacts/ablation.jsonl"))
@@ -340,7 +340,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train.add_argument(
         "--reward",
-        choices=("sparse", "shaped", "risk-aware", "cost-aware"),
+        choices=("sparse", "shaped", "risk-aware", "cost-aware", "pivot-focused"),
         default="risk-aware",
         help="reward strategy to train against",
     )

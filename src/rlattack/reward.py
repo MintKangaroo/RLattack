@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from rlattack.env import RewardConfig
 
-RewardStrategy = Literal["sparse", "shaped", "risk-aware", "cost-aware"]
+RewardStrategy = Literal["sparse", "shaped", "risk-aware", "cost-aware", "pivot-focused"]
 
 
 class RewardExperiment(BaseModel):
@@ -41,6 +41,17 @@ def build_reward_config(strategy: RewardStrategy) -> RewardConfig:
         return RewardConfig(detection_risk=-2.0, step_cost=-0.03)
     if strategy == "cost-aware":
         return RewardConfig(step_cost=-0.2, duplicate_or_invalid=-1.5)
+    if strategy == "pivot-focused":
+        # Discovery is cheap and pivoting is what actually advances the attack. Paying
+        # 1.0 per discovered host makes probing worthwhile on its own, which is how a
+        # policy under noisy discovery ends up sweeping instead of progressing.
+        return RewardConfig(
+            new_host=0.2,
+            pivot=2.5,
+            failed_attempt=-0.3,
+            detection_risk=-2.0,
+            step_cost=-0.03,
+        )
     if strategy == "shaped":
         return RewardConfig()
     raise ValueError(f"unsupported reward strategy: {strategy}")

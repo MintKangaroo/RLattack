@@ -29,7 +29,13 @@ ObservationMode = Literal["scenario", "curriculum"]
 DefenderMode = Literal["passive", "adaptive"]
 DiscoveryMode = Literal["exact", "noisy"]
 
-REWARD_STRATEGIES: tuple[RewardStrategy, ...] = ("sparse", "shaped", "risk-aware", "cost-aware")
+REWARD_STRATEGIES: tuple[RewardStrategy, ...] = (
+    "sparse",
+    "shaped",
+    "risk-aware",
+    "cost-aware",
+    "pivot-focused",
+)
 
 MAX_STEP_BUDGET = 512
 MAX_BENCHMARK_EPISODES = 256
@@ -65,7 +71,7 @@ class ExperimentConfig:
             raise ValueError("difficulty must be easy, medium, or hard")
         if self.agent not in AGENT_LABELS:
             raise ValueError("unsupported baseline agent")
-        if self.reward_strategy not in {"sparse", "shaped", "risk-aware", "cost-aware"}:
+        if self.reward_strategy not in set(REWARD_STRATEGIES):
             raise ValueError("unsupported reward strategy")
         if self.step_budget < 1:
             raise ValueError("step_budget must be positive")

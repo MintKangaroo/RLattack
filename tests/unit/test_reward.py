@@ -37,3 +37,15 @@ def test_invalid_reward_strategy_is_rejected() -> None:
         build_reward_config("unknown")  # type: ignore[arg-type]
     with pytest.raises(ValidationError):
         make_experiment_record("shaped", "", seed=0)
+
+
+def test_pivot_focused_moves_reward_from_discovery_to_pivoting() -> None:
+    """Paying per discovered host makes probing worthwhile on its own."""
+
+    shaped = build_reward_config("shaped")
+    pivot_focused = build_reward_config("pivot-focused")
+
+    assert pivot_focused.new_host < shaped.new_host
+    assert pivot_focused.pivot > shaped.pivot
+    assert pivot_focused.failed_attempt < shaped.failed_attempt
+    assert pivot_focused.objective == shaped.objective
