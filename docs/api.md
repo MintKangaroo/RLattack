@@ -1,6 +1,6 @@
 # Dashboard and API
 
-RLAttack `v0.4.0`은 simulation 결과를 탐색하는 local FastAPI dashboard를 제공합니다.
+RLAttack `v0.7.0`은 simulation 결과를 탐색하는 local FastAPI dashboard를 제공합니다.
 이 API가 실행하는 것은 검증된 `AttackPathEnv`뿐이며 scanner, shell, 외부 target client는
 포함하지 않습니다.
 
@@ -101,13 +101,50 @@ rlattack transfer --episodes 32 --policy artifacts/policies/final.zip \
 9개 (size × difficulty) class 전체를 공유 seed로 평가하고, 기준 class 대비 paired 검정을
 출력합니다.
 
+## Condition sweep
+
+```bash
+rlattack conditions --size medium --difficulty hard --episodes 32 \
+  --policy artifacts/policies/mppo-400k/final.zip --output artifacts/conditions.jsonl
+```
+
+`defender × discovery` 격자 전체를 같은 seed로 평가하고 대조 조건 대비 paired 검정을
+출력합니다. **학습된 policy는 반드시 이 표와 함께 인용해야 합니다** — 학습한 조건 밖에서는
+성능이 보장되지 않습니다.
+
+## Two-player game
+
+```bash
+rlattack game --agent shortest-path --rounds 200            # 학습 defender
+rlattack game --attacker bandit --rounds 200                # 양쪽 모두 학습
+rlattack game --defender-policy bandit --rounds 200         # 에피소드당 고정 설정 defender
+```
+
+`contextual`(기본) defender는 alert band·회수 가능 credential 유무·episode 진행 단계에
+조건화된 정책을 학습합니다. `bandit`은 에피소드마다 설정 하나를 고릅니다.
+
+## Importing an external attack graph
+
+```bash
+rlattack import --input topology.graphml --output artifacts/imported.json
+rlattack import --input topology.json --topology-only
+```
+
+GraphML, GML, NetworkX node-link JSON을 받습니다. 모든 node ID는 익명 ID로 치환되고,
+hostname·주소·exploit 자료가 포함되면 import를 거부합니다. 기본적으로 재생 가능한
+service/vulnerability/credential/objective 층을 합성하며, `--topology-only`로 끌 수 있습니다.
+
 ## Training
 
 ```bash
 python -m pip install -e ".[training]"
-rlattack train --algorithm maskable-ppo --curriculum
-rlattack train --algorithm ppo --size medium --timesteps 200000
+rlattack train --algorithm maskable-ppo --curriculum --curriculum-timesteps 400000
+rlattack train --algorithm maskable-ppo --curriculum --discovery noisy
+rlattack train --algorithm maskable-ppo --curriculum --defender adaptive
 ```
+
+`--discovery`와 `--defender`로 **평가할 조건에서 학습**할 수 있습니다. v0.6 정책이
+noisy discovery에서 0%였던 이유가 exact adjacency로만 학습했기 때문입니다.
 
 `--curriculum`은 하나의 policy를 여러 stage에 걸쳐 이어서 학습합니다. 기본 algorithm은
 `maskable-ppo`입니다. 각 상태에서 유효한 action이 전체의 1~2%뿐이라, masking 없이는

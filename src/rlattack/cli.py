@@ -329,6 +329,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="passive",
         help="train against a passive or an adaptive defender",
     )
+    train.add_argument(
+        "--reward",
+        choices=("sparse", "shaped", "risk-aware", "cost-aware"),
+        default="risk-aware",
+        help="reward strategy to train against",
+    )
     train.add_argument("--output-dir", type=Path, default=Path("artifacts/policies"))
     train.add_argument(
         "--curriculum",
@@ -466,6 +472,7 @@ def _stage_env_builder(
     observation_config: ObservationConfig,
     dynamics: DynamicsConfig | None = None,
     defender: DefenderConfig | None = None,
+    reward_strategy: RewardStrategy = "risk-aware",
 ) -> Callable[[], StageEnv]:
     """Return a zero-argument environment builder for one curriculum stage.
 
@@ -477,6 +484,7 @@ def _stage_env_builder(
     factory = stage_env_factory(
         stage,
         step_budget=step_budget,
+        reward_strategy=reward_strategy,
         observation_config=observation_config,
         dynamics=dynamics,
         defender=defender,
