@@ -771,3 +771,102 @@ def test_cli_game_can_let_the_attacker_learn_too(
 
     assert "attacker  : bandit over baselines" in printed
     assert "attacker shortest-path" in printed
+
+
+def test_cli_curriculum_stages_mix_earlier_stages_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    stage_sizes: list[int] = []
+
+    def record(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        for builder in builders:
+            env = cast(Callable[[], StageEnv], builder)()
+            stage_sizes.append(env.pool_size)
+
+    monkeypatch.setattr(cli, "train_curriculum", record)
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "mixed"),
+            ]
+        )
+        == 0
+    )
+    mixed = stage_sizes[:]
+    stage_sizes.clear()
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--forget-previous-stages",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "isolated"),
+            ]
+        )
+        == 0
+    )
+
+    assert stage_sizes == [stage_sizes[0]] * len(stage_sizes), (
+        "isolated stages each draw from one class"
+    )
+    assert mixed == [stage_sizes[0] * (index + 1) for index in range(len(mixed))], (
+        "a mixed stage must also draw from every earlier stage"
+    )
+
+
+def test_cli_training_conditions_reach_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The flags must reach the env, not just the log line.
+
+    A refactor once left --discovery parsed and printed but never passed through, so a
+    run advertised as noisy trained under exact adjacency and its results were wrong.
+    """
+
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    seen: dict[str, object] = {}
+
+    def record(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        env = cast(Callable[[], StageEnv], builders[1])().current
+        seen["noisy"] = env.dynamics.noisy_discovery
+        seen["defender"] = env.defender.enabled
+        seen["step_cost"] = env.reward_config.step_cost
+
+    monkeypatch.setattr(cli, "train_curriculum", record)
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--discovery",
+                "noisy",
+                "--defender",
+                "adaptive",
+                "--reward",
+                "cost-aware",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "run"),
+            ]
+        )
+        == 0
+    )
+
+    assert seen == {"noisy": True, "defender": True, "step_cost": -0.2}

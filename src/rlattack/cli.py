@@ -335,6 +335,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="risk-aware",
         help="reward strategy to train against",
     )
+    train.add_argument(
+        "--forget-previous-stages",
+        action="store_true",
+        help="train each stage in isolation instead of sampling earlier stages too",
+    )
     train.add_argument("--output-dir", type=Path, default=Path("artifacts/policies"))
     train.add_argument(
         "--curriculum",
@@ -473,6 +478,7 @@ def _stage_env_builder(
     dynamics: DynamicsConfig | None = None,
     defender: DefenderConfig | None = None,
     reward_strategy: RewardStrategy = "risk-aware",
+    previous: Sequence[CurriculumStage] = (),
 ) -> Callable[[], StageEnv]:
     """Return a zero-argument environment builder for one curriculum stage.
 
@@ -490,8 +496,20 @@ def _stage_env_builder(
         defender=defender,
     )
 
+    earlier = [
+        stage_env_factory(
+            previous_stage,
+            step_budget=step_budget,
+            reward_strategy=reward_strategy,
+            observation_config=observation_config,
+            dynamics=dynamics,
+            defender=defender,
+        )
+        for previous_stage in previous
+    ]
+
     def build() -> StageEnv:
-        return StageEnv(stage, TRAINING_SEEDS, factory)
+        return StageEnv(stage, TRAINING_SEEDS, factory, earlier)
 
     return build
 
@@ -715,8 +733,21 @@ def _run_training(args: argparse.Namespace) -> int:
             if args.curriculum_timesteps
             else DEFAULT_CURRICULUM
         )
+        dynamics = DynamicsConfig(noisy_discovery=args.discovery == "noisy")
+        defender = DefenderConfig.adaptive() if args.defender == "adaptive" else DefenderConfig()
         train_curriculum(
-            [_stage_env_builder(stage, args.step_budget, observation_config) for stage in stages],
+            [
+                _stage_env_builder(
+                    stage,
+                    args.step_budget,
+                    observation_config,
+                    dynamics,
+                    defender,
+                    cast(RewardStrategy, args.reward),
+                    () if args.forget_previous_stages else stages[:index],
+                )
+                for index, stage in enumerate(stages)
+            ],
             [stage.timesteps for stage in stages],
             PPOTrainingConfig(seed=args.seed, output_dir=args.output_dir),
             algorithm=args.algorithm,

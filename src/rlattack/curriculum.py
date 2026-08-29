@@ -150,15 +150,27 @@ class StageEnv(gym.Env[Observation, np.int64]):
         stage: CurriculumStage,
         seeds: Sequence[int],
         env_factory: Callable[[int], AttackPathEnv],
+        previous: Sequence[Callable[[int], AttackPathEnv]] = (),
     ) -> None:
         if not seeds:
             raise ValueError("a stage needs at least one training seed")
         self.stage = stage
         self.seeds = tuple(seeds)
-        self._envs = [env_factory(seed) for seed in self.seeds]
+        # Sampling earlier stages alongside the current one keeps them alive. Training
+        # each stage in isolation makes the policy forget the previous ones outright,
+        # and the curriculum's rolling reward hides it because Stable-Baselines3 carries
+        # its episode buffer across stages.
+        factories = [env_factory, *previous]
+        self._envs = [factory(seed) for factory in factories for seed in self.seeds]
         self._current = self._envs[0]
         self.observation_space = self._current.observation_space
         self.action_space = self._current.action_space
+
+    @property
+    def pool_size(self) -> int:
+        """Return how many scenarios this stage draws from, across all mixed classes."""
+
+        return len(self._envs)
 
     @property
     def current(self) -> AttackPathEnv:
