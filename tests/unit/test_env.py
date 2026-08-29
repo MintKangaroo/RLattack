@@ -2,7 +2,15 @@ import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
 
-from rlattack.env import ACTION_NAMES, Action, AttackPathEnv, DynamicsConfig
+from rlattack.defender import DefenderConfig
+from rlattack.env import (
+    ACTION_NAMES,
+    Action,
+    AttackPathEnv,
+    DynamicsConfig,
+    ObservationConfig,
+)
+from rlattack.generator import generate_scenario
 from rlattack.scenario import (
     AccessEdge,
     Credential,
@@ -246,6 +254,8 @@ def test_dynamics_configuration_is_validated() -> None:
         DynamicsConfig(failed_attempt_risk=-0.1)
     with pytest.raises(ValueError, match="pivot_risk"):
         DynamicsConfig(pivot_risk=1.5)
+    with pytest.raises(ValueError, match="risk_reference_hosts"):
+        DynamicsConfig(risk_reference_hosts=0)
 
 
 def test_duplicate_actions_are_penalized() -> None:
@@ -290,3 +300,193 @@ def test_hosts_without_modeled_credentials_can_be_pivoted_from() -> None:
     assert info["valid_action"] is True
     assert info["outcome"] == "success"
     assert reward > 0
+
+
+def test_observation_capacities_are_validated() -> None:
+    with pytest.raises(ValueError, match="host_capacity"):
+        ObservationConfig(host_capacity=0)
+    with pytest.raises(ValueError, match="alert_levels"):
+        ObservationConfig(alert_levels=1)
+    with pytest.raises(ValueError, match="smaller than the scenario"):
+        AttackPathEnv(make_scenario(), observation_config=ObservationConfig(host_capacity=1))
+
+
+def test_fixed_capacities_hide_the_network_size() -> None:
+    env = AttackPathEnv(make_scenario(), observation_config=ObservationConfig.for_curriculum())
+    observation, info = env.reset(seed=1)
+
+    assert observation["discovered_hosts"].shape == (16,)
+    assert observation["known_services"].shape == (32,)
+    assert info["target_count"] == 32
+    assert int(observation["discovered_hosts"].sum()) == 1
+
+
+def test_the_agent_observes_a_quantized_alert_level_by_default() -> None:
+    env = AttackPathEnv(
+        make_scenario(),
+        dynamics=DynamicsConfig(stochastic=False, pivot_risk=0.5, detection_threshold=0.9),
+    )
+    observation, info = env.reset(seed=1)
+
+    assert "detection_risk" not in observation
+    assert observation["alert_level"].tolist() == [1, 0, 0]
+    assert info["alert_level"] == 0
+
+    for action_type, target in SUCCESS_PATH[:7]:
+        observation, _, _, _, info = env.step(env.encode_action(action_type, target))
+
+    assert info["detection_risk"] > 0.5
+    assert observation["alert_level"].tolist() == [0, 1, 0]
+    assert info["alert_level"] == 1
+
+
+def test_exact_risk_can_be_exposed_for_analysis_runs() -> None:
+    env = AttackPathEnv(
+        make_scenario(),
+        observation_config=ObservationConfig(expose_exact_risk=True),
+        dynamics=DynamicsConfig.deterministic(),
+    )
+    observation, _ = env.reset(seed=1)
+
+    assert observation["detection_risk"].tolist() == [0.0]
+    assert "alert_level" in observation
+
+
+def test_the_defender_is_passive_by_default() -> None:
+    env = deterministic_env()
+    env.reset(seed=1)
+
+    _, _, _, _, info = env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+
+    assert info["defender_action"] == "none"
+    assert info["defender_actions"] == 0
+
+
+def test_an_adaptive_defender_hardens_monitoring_and_revokes_credentials() -> None:
+    env = AttackPathEnv(
+        make_scenario(),
+        step_budget=40,
+        dynamics=DynamicsConfig.deterministic(),
+        defender=DefenderConfig(
+            enabled=True,
+            alert_threshold=0.0,
+            response_cooldown=1,
+            revocation_probability=1.0,
+            hardening_step=1.0,
+        ),
+    )
+    env.reset(seed=1)
+    for action_type, target in SUCCESS_PATH[:4]:
+        _, _, _, _, info = env.step(env.encode_action(action_type, target))
+
+    assert info["revoked_credentials"] >= 1
+    assert info["defender_action"] == "revoke_credential"
+
+    observation = env._observation()
+
+    assert int(observation["acquired_credentials"].sum()) == 0
+    assert int(observation["acquired_privileges"].sum()) == 0
+
+
+def test_hardening_raises_the_detection_cost_of_reached_hosts() -> None:
+    def enumeration_risk(defender: DefenderConfig) -> float:
+        env = AttackPathEnv(
+            make_scenario(),
+            dynamics=DynamicsConfig.deterministic(),
+            defender=defender,
+        )
+        env.reset(seed=1)
+        env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+        _, _, _, _, info = env.step(env.encode_action(Action.ENUMERATE_SERVICE, 0))
+        return float(info["detection_risk"])
+
+    hardened = DefenderConfig(
+        enabled=True,
+        alert_threshold=0.0,
+        response_cooldown=1,
+        revocation_probability=0.0,
+        hardening_step=1.0,
+    )
+
+    assert enumeration_risk(hardened) > enumeration_risk(DefenderConfig())
+
+
+def test_revocation_keeps_a_privilege_another_credential_still_grants() -> None:
+    scenario = make_scenario()
+    extra = scenario.credentials[0].model_copy(update={"id": "web-user-2"})
+    scenario = scenario.model_copy(update={"credentials": (*scenario.credentials, extra)})
+    env = AttackPathEnv(scenario, dynamics=DynamicsConfig.deterministic())
+    env.reset(seed=1)
+    for action_type, target in SUCCESS_PATH[:4]:
+        env.step(env.encode_action(action_type, target))
+    env._acquired_credentials[1] = 1
+
+    env._revoke_credential(0)
+
+    assert env._acquired_credentials.tolist()[:2] == [0, 1]
+    assert env._acquired_privileges[env._privilege_index["user"]] == 1
+
+
+def test_every_objective_must_be_collected_before_the_episode_ends() -> None:
+    scenario = make_scenario()
+    second = scenario.objectives[0].model_copy(
+        update={"id": "collect-staging", "host_id": "web", "required_privilege_id": "user"}
+    )
+    scenario = scenario.model_copy(update={"objectives": (*scenario.objectives, second)})
+    env = AttackPathEnv(scenario, step_budget=40, dynamics=DynamicsConfig.deterministic())
+    env.reset(seed=1)
+    for action_type, target in SUCCESS_PATH[:-1]:
+        env.step(env.encode_action(action_type, target))
+
+    _, _, terminated, _, info = env.step(env.encode_action(Action.COLLECT_SIMULATED_OBJECTIVE, 0))
+
+    assert terminated is False
+    assert info["objective_captured"] is False
+    assert info["collected_objectives"] == 1
+
+    _, _, terminated, _, info = env.step(env.encode_action(Action.COLLECT_SIMULATED_OBJECTIVE, 1))
+
+    assert terminated is True
+    assert info["objective_captured"] is True
+    assert info["collected_objectives"] == 2
+
+
+def test_a_collected_objective_cannot_be_collected_twice() -> None:
+    env = deterministic_env(step_budget=40)
+    env.reset(seed=1)
+    for action_type, target in SUCCESS_PATH[:-1]:
+        env.step(env.encode_action(action_type, target))
+    env.step(env.encode_action(Action.COLLECT_SIMULATED_OBJECTIVE, 0))
+    env.reset(seed=1)
+    for action_type, target in SUCCESS_PATH[:-1]:
+        env.step(env.encode_action(action_type, target))
+    mask = env.action_mask().reshape(len(Action), env.target_count)
+
+    assert mask[Action.COLLECT_SIMULATED_OBJECTIVE, 0] == 1
+
+    env.step(env.encode_action(Action.COLLECT_SIMULATED_OBJECTIVE, 0))
+
+    assert (
+        env.action_mask().reshape(len(Action), env.target_count)[
+            Action.COLLECT_SIMULATED_OBJECTIVE, 0
+        ]
+        == 0
+    )
+
+
+def test_detection_risk_is_normalized_by_network_size() -> None:
+    """A larger network must not be unwinnable purely because it takes more steps."""
+
+    def enumeration_risk(host_count: int, normalize: bool) -> float:
+        scenario = generate_scenario("small" if host_count == 3 else "large", "easy", 0)
+        env = AttackPathEnv(
+            scenario,
+            dynamics=DynamicsConfig(stochastic=False, normalize_risk_by_size=normalize),
+        )
+        env.reset(seed=0)
+        env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+        _, _, _, _, info = env.step(env.encode_action(Action.ENUMERATE_SERVICE, 0))
+        return float(info["detection_risk"])
+
+    assert enumeration_risk(12, normalize=True) < enumeration_risk(12, normalize=False)
+    assert enumeration_risk(3, normalize=True) == enumeration_risk(3, normalize=False)

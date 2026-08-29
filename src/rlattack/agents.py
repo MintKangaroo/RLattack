@@ -191,23 +191,34 @@ class ShortestPathOracle:
             if self.scenario.entry_host_ids
             else self.scenario.hosts[0].id
         )
-        objective = self.scenario.objectives[0]
-        try:
-            self.route = tuple(
-                nx.shortest_path(graph.subgraph(hosts), entry_host, objective.host_id)
-            )
-        except nx.NetworkXNoPath as error:
-            raise ValueError("graph oracle requires a path to the objective") from error
+        self.route = self._plan_route(graph.subgraph(hosts), entry_host)
         self._host_index = {host.id: index for index, host in enumerate(self.scenario.hosts)}
         self._route_indices = tuple(self._host_index[host_id] for host_id in self.route)
         self._required_actions = {
             host.id: self._required_for_host(host.id) for host in self.scenario.hosts
         }
-        self._objective_index = next(
-            index
-            for index, record in enumerate(self.scenario.objectives)
-            if record.id == objective.id
-        )
+
+    def _plan_route(self, host_graph: Any, entry_host: str) -> tuple[str, ...]:
+        """Chain shortest paths through every objective host, shallowest first.
+
+        Routing only to the deepest objective is not enough: network shortcuts can skip
+        past a shallower objective host entirely, leaving the oracle to backtrack.
+        """
+
+        try:
+            depths = {
+                objective.host_id: len(nx.shortest_path(host_graph, entry_host, objective.host_id))
+                for objective in self.scenario.objectives
+            }
+        except nx.NetworkXNoPath as error:
+            raise ValueError("graph oracle requires a path to the objective") from error
+        route = [entry_host]
+        current = entry_host
+        for host_id in sorted(depths, key=lambda host: (depths[host], host)):
+            segment = nx.shortest_path(host_graph, current, host_id)
+            route.extend(segment[1:])
+            current = host_id
+        return tuple(route)
 
     def _credential_host(self, credential_id: str) -> str:
         return next(
@@ -252,7 +263,7 @@ class ShortestPathOracle:
 
     def predict(self, observation: Observation, info: dict[str, object]) -> np.int64:
         valid_actions(info)
-        collect = _first_valid(info, Action.COLLECT_SIMULATED_OBJECTIVE, (self._objective_index,))
+        collect = _first_valid(info, Action.COLLECT_SIMULATED_OBJECTIVE)
         if collect is not None:
             return collect
         escalate = _first_valid(info, Action.ESCALATE_SIMULATED_PRIVILEGE)

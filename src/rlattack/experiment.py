@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, cast
 
@@ -16,7 +16,8 @@ from rlattack.agents import (
     ShortestPathOracle,
     reset_agent,
 )
-from rlattack.env import AttackPathEnv, DynamicsConfig
+from rlattack.defender import DefenderConfig
+from rlattack.env import AttackPathEnv, DynamicsConfig, ObservationConfig
 from rlattack.evaluation import BenchmarkMetrics, evaluate_agent
 from rlattack.explain import EpisodeTrace, explain_action
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
@@ -24,6 +25,10 @@ from rlattack.reward import RewardStrategy, build_reward_config
 from rlattack.scenario import Scenario
 
 AgentName = Literal["random", "greedy", "rule-based", "shortest-path"]
+ObservationMode = Literal["scenario", "curriculum"]
+DefenderMode = Literal["passive", "adaptive"]
+
+REWARD_STRATEGIES: tuple[RewardStrategy, ...] = ("sparse", "shaped", "risk-aware", "cost-aware")
 
 MAX_STEP_BUDGET = 512
 MAX_BENCHMARK_EPISODES = 256
@@ -48,6 +53,8 @@ class ExperimentConfig:
     step_budget: int = 64
     benchmark_episodes: int = 8
     stochastic: bool = True
+    observation: ObservationMode = "scenario"
+    defender: DefenderMode = "passive"
 
     def __post_init__(self) -> None:
         if self.size not in {"small", "medium", "large"}:
@@ -66,11 +73,27 @@ class ExperimentConfig:
             raise ValueError(f"step_budget must be at most {MAX_STEP_BUDGET}")
         if self.benchmark_episodes > MAX_BENCHMARK_EPISODES:
             raise ValueError(f"benchmark_episodes must be at most {MAX_BENCHMARK_EPISODES}")
+        if self.observation not in ("scenario", "curriculum"):
+            raise ValueError("observation must be scenario or curriculum")
+        if self.defender not in ("passive", "adaptive"):
+            raise ValueError("defender must be passive or adaptive")
 
     def dynamics(self) -> DynamicsConfig:
         """Return the transition-uncertainty configuration for this experiment."""
 
         return DynamicsConfig() if self.stochastic else DynamicsConfig.deterministic()
+
+    def defender_config(self) -> DefenderConfig:
+        """Return the defender condition: passive control, or adaptive treatment."""
+
+        return DefenderConfig.adaptive() if self.defender == "adaptive" else DefenderConfig()
+
+    def observation_config(self) -> ObservationConfig:
+        """Return the observation interface: scenario-sized, or fixed for transfer."""
+
+        if self.observation == "curriculum":
+            return ObservationConfig.for_curriculum()
+        return ObservationConfig()
 
 
 @dataclass(frozen=True)
@@ -96,6 +119,8 @@ class EpisodeResult:
     agent: AgentName
     success: bool
     detected: bool
+    defender_actions: int
+    revoked_credentials: int
     terminated: bool
     truncated: bool
     steps: int
@@ -128,6 +153,8 @@ def run_episode(
     step_budget: int = 64,
     reward_strategy: RewardStrategy = "shaped",
     dynamics: DynamicsConfig | None = None,
+    observation_config: ObservationConfig | None = None,
+    defender: DefenderConfig | None = None,
 ) -> EpisodeResult:
     """Run one baseline episode and retain an explainable trajectory."""
 
@@ -137,6 +164,8 @@ def run_episode(
         step_budget=step_budget,
         reward_config=reward_config,
         dynamics=dynamics,
+        observation_config=observation_config,
+        defender=defender,
     )
     agent = create_agent(agent_name, scenario, seed=seed)
     reset_agent(agent, seed=seed)
@@ -182,7 +211,7 @@ def run_episode(
                         np.sum(observation["validated_vulnerabilities"])
                     ),
                     "acquired_privileges": int(np.sum(observation["acquired_privileges"])),
-                    "steps_remaining": float(observation["steps_remaining"][0]),
+                    "steps_remaining": float(cast(int, info["steps_remaining"])),
                 },
             )
         )
@@ -192,6 +221,8 @@ def run_episode(
         agent=agent_name,
         success=bool(info["objective_captured"]),
         detected=bool(info["detected"]),
+        defender_actions=cast(int, info["defender_actions"]),
+        revoked_credentials=cast(int, info["revoked_credentials"]),
         terminated=terminated,
         truncated=truncated,
         steps=cast(int, info["steps"]),
@@ -223,6 +254,8 @@ def run_benchmarks(
 
     reward_config = build_reward_config(config.reward_strategy)
     dynamics = config.dynamics()
+    observation_config = config.observation_config()
+    defender = config.defender_config()
 
     def scenario_for(seed: int) -> Scenario:
         return generate_scenario(config.size, config.difficulty, seed)
@@ -233,6 +266,8 @@ def run_benchmarks(
             step_budget=config.step_budget,
             reward_config=reward_config,
             dynamics=dynamics,
+            observation_config=observation_config,
+            defender=defender,
         )
 
     def agent_factory(name: AgentName) -> Callable[[int], Agent]:
@@ -252,6 +287,49 @@ def run_benchmarks(
     }
 
 
+def run_reward_ablation(
+    config: ExperimentConfig,
+    strategies: Sequence[RewardStrategy] = REWARD_STRATEGIES,
+) -> dict[str, BenchmarkMetrics]:
+    """Evaluate one agent under several reward strategies on identical seeds.
+
+    Everything except the reward is held fixed - same scenarios, same seeds, same
+    dynamics and defender - so the episodes stay paired and the strategies can be
+    compared with a paired significance test.
+    """
+
+    if not strategies:
+        raise ValueError("at least one reward strategy is required")
+    seeds = benchmark_seeds(config)
+    dynamics = config.dynamics()
+    observation_config = config.observation_config()
+    defender = config.defender_config()
+
+    def scenario_for(seed: int) -> Scenario:
+        return generate_scenario(config.size, config.difficulty, seed)
+
+    def env_factory(strategy: RewardStrategy) -> Callable[[int], AttackPathEnv]:
+        def build(seed: int) -> AttackPathEnv:
+            return AttackPathEnv(
+                scenario_for(seed),
+                step_budget=config.step_budget,
+                reward_config=build_reward_config(strategy),
+                dynamics=dynamics,
+                observation_config=observation_config,
+                defender=defender,
+            )
+
+        return build
+
+    def agent_factory(seed: int) -> Agent:
+        return create_agent(config.agent, scenario_for(seed), seed=seed)
+
+    return {
+        strategy: evaluate_agent(strategy, agent_factory, env_factory(strategy), seeds)
+        for strategy in strategies
+    }
+
+
 def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, Any]:
     """Build the deterministic view model consumed by HTML and JSON clients."""
 
@@ -264,6 +342,8 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
         step_budget=selected.step_budget,
         reward_strategy=selected.reward_strategy,
         dynamics=selected.dynamics(),
+        observation_config=selected.observation_config(),
+        defender=selected.defender_config(),
     )
     benchmarks = run_benchmarks(selected)
     metrics = [

@@ -11,6 +11,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from rlattack.defender import DefenderConfig, DefenderResponse, DefenderState, decide_response
 from rlattack.scenario import NetworkEdge, Scenario
 
 Observation = dict[str, np.ndarray[Any, Any]]
@@ -59,10 +60,20 @@ TARGET_KINDS: tuple[str, ...] = (
 )
 
 
-def _width(records: tuple[Any, ...]) -> int:
-    """Return a positive observation width; Gymnasium rejects zero-length binary spaces."""
+def _capacity(records: tuple[Any, ...], configured: int | None) -> int:
+    """Return the observation width for one record kind.
 
-    return max(1, len(records))
+    Widths are always positive because Gymnasium rejects zero-length binary spaces, and
+    a configured capacity must be able to hold the scenario it is used with.
+    """
+
+    if configured is None:
+        return max(1, len(records))
+    if configured < len(records):
+        raise ValueError(
+            f"observation capacity {configured} is smaller than the scenario's {len(records)}"
+        )
+    return configured
 
 
 @dataclass(frozen=True)
@@ -89,6 +100,11 @@ class DynamicsConfig:
 
     The environment stays reproducible: every random draw comes from the seeded
     :attr:`gymnasium.Env.np_random` stream, so a seed fixes the whole trajectory.
+
+    Detection risk is normalized by network size by default. Without it the threshold is
+    an absolute budget of noisy actions, so a larger network is unwinnable purely
+    because reaching its objective takes more steps - which shows up in a transfer
+    table as a generalization failure that is really a calibration artifact.
     """
 
     stochastic: bool = True
@@ -97,6 +113,8 @@ class DynamicsConfig:
     detection_threshold: float = 0.9
     failed_attempt_risk: float = 0.05
     pivot_risk: float = 0.03
+    normalize_risk_by_size: bool = True
+    risk_reference_hosts: int = 6
 
     def __post_init__(self) -> None:
         for name in ("base_success_probability", "minimum_success_probability"):
@@ -109,12 +127,80 @@ class DynamicsConfig:
             value = getattr(self, name)
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be in [0, 1]")
+        if self.risk_reference_hosts < 1:
+            raise ValueError("risk_reference_hosts must be positive")
 
     @classmethod
     def deterministic(cls) -> DynamicsConfig:
         """Return dynamics where every valid action succeeds, for regression tests."""
 
         return cls(stochastic=False)
+
+
+@dataclass(frozen=True)
+class ObservationConfig:
+    """What the agent may observe, and the fixed widths it observes it through.
+
+    Two separate concerns are deliberately handled together here, because both are
+    about the *interface* a policy sees rather than about the simulated world:
+
+    * **Capacities.** Without them the observation and action widths equal the record
+      counts of one scenario, which both leaks the network size to the agent and makes
+      a policy trained on ``small`` structurally incompatible with ``large``. Fixed
+      capacities pad every channel, so undiscovered records and unused slots are
+      indistinguishable and one policy transfers across scenario classes.
+    * **Detection visibility.** An attacker does not read the defender's exact
+      suspicion score. By default the agent sees a quantized ``alert_level`` one-hot;
+      the exact risk stays in ``info`` for reporting and analysis only.
+    """
+
+    host_capacity: int | None = None
+    service_capacity: int | None = None
+    vulnerability_capacity: int | None = None
+    credential_capacity: int | None = None
+    privilege_capacity: int | None = None
+    access_capacity: int | None = None
+    privilege_edge_capacity: int | None = None
+    objective_capacity: int | None = None
+    expose_exact_risk: bool = False
+    alert_levels: int = 3
+
+    def __post_init__(self) -> None:
+        for name in (
+            "host_capacity",
+            "service_capacity",
+            "vulnerability_capacity",
+            "credential_capacity",
+            "privilege_capacity",
+            "access_capacity",
+            "privilege_edge_capacity",
+            "objective_capacity",
+        ):
+            value = getattr(self, name)
+            if value is not None and value < 1:
+                raise ValueError(f"{name} must be positive when set")
+        if self.alert_levels < 2:
+            raise ValueError("alert_levels must be at least 2")
+
+    @classmethod
+    def for_curriculum(cls, *, expose_exact_risk: bool = False) -> ObservationConfig:
+        """Return capacities large enough for every generated scenario class.
+
+        A single policy can then be trained on ``small`` scenarios and evaluated on
+        ``large`` ones without changing the observation or action space.
+        """
+
+        return cls(
+            host_capacity=16,
+            service_capacity=32,
+            vulnerability_capacity=32,
+            credential_capacity=16,
+            privilege_capacity=8,
+            access_capacity=16,
+            privilege_edge_capacity=8,
+            objective_capacity=8,
+            expose_exact_risk=expose_exact_risk,
+        )
 
 
 class AttackPathEnv(gym.Env[Observation, np.int64]):
@@ -135,6 +221,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         step_budget: int = 50,
         reward_config: RewardConfig | None = None,
         dynamics: DynamicsConfig | None = None,
+        observation_config: ObservationConfig | None = None,
+        defender: DefenderConfig | None = None,
     ) -> None:
         if step_budget < 1:
             raise ValueError("step_budget must be positive")
@@ -144,6 +232,13 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self.step_budget = step_budget
         self.reward_config = reward_config or RewardConfig()
         self.dynamics = dynamics or DynamicsConfig()
+        self.observation_config = observation_config or ObservationConfig()
+        self.defender = defender or DefenderConfig()
+        self._risk_scale = (
+            min(1.0, self.dynamics.risk_reference_hosts / len(scenario.hosts))
+            if self.dynamics.normalize_risk_by_size
+            else 1.0
+        )
         self._host_index = {record.id: index for index, record in enumerate(scenario.hosts)}
         self._service_index = {record.id: index for index, record in enumerate(scenario.services)}
         self._vulnerability_index = {
@@ -164,14 +259,26 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             for host in scenario.hosts
         }
         self._entry_hosts = set(scenario.entry_host_ids or (scenario.hosts[0].id,))
+        config = self.observation_config
+        self._host_width = _capacity(scenario.hosts, config.host_capacity)
+        self._service_width = _capacity(scenario.services, config.service_capacity)
+        self._vulnerability_width = _capacity(
+            scenario.vulnerabilities, config.vulnerability_capacity
+        )
+        self._credential_width = _capacity(scenario.credentials, config.credential_capacity)
+        self._privilege_width = _capacity(scenario.privileges, config.privilege_capacity)
+        self._access_width = _capacity(scenario.access_edges, config.access_capacity)
+        self._privilege_edge_width = _capacity(
+            scenario.privilege_edges, config.privilege_edge_capacity
+        )
+        self._objective_width = _capacity(scenario.objectives, config.objective_capacity)
         self.target_count = max(
-            len(scenario.hosts),
-            len(scenario.services),
-            len(scenario.vulnerabilities),
-            len(scenario.access_edges),
-            len(scenario.privilege_edges),
-            len(scenario.objectives),
-            1,
+            self._host_width,
+            self._service_width,
+            self._vulnerability_width,
+            self._access_width,
+            self._privilege_edge_width,
+            self._objective_width,
         )
         host_ids = tuple(record.id for record in scenario.hosts)
         service_ids = tuple(record.id for record in scenario.services)
@@ -192,34 +299,34 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             (),
         )
         self.action_space = spaces.Discrete(len(Action) * self.target_count)
-        self.observation_space = spaces.Dict(
-            {
-                "discovered_hosts": spaces.MultiBinary(_width(scenario.hosts)),
-                "reachable_hosts": spaces.MultiBinary(_width(scenario.hosts)),
-                "known_services": spaces.MultiBinary(_width(scenario.services)),
-                "enumerated_services": spaces.MultiBinary(_width(scenario.services)),
-                "validated_vulnerabilities": spaces.MultiBinary(_width(scenario.vulnerabilities)),
-                "acquired_credentials": spaces.MultiBinary(_width(scenario.credentials)),
-                "acquired_privileges": spaces.MultiBinary(_width(scenario.privileges)),
-                "detection_risk": spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
-                "steps_remaining": spaces.Box(0.0, step_budget, shape=(1,), dtype=np.float32),
-            }
-        )
+        channels: dict[str, spaces.Space[Any]] = {
+            "discovered_hosts": spaces.MultiBinary(self._host_width),
+            "reachable_hosts": spaces.MultiBinary(self._host_width),
+            "known_services": spaces.MultiBinary(self._service_width),
+            "enumerated_services": spaces.MultiBinary(self._service_width),
+            "validated_vulnerabilities": spaces.MultiBinary(self._vulnerability_width),
+            "acquired_credentials": spaces.MultiBinary(self._credential_width),
+            "acquired_privileges": spaces.MultiBinary(self._privilege_width),
+            "collected_objectives": spaces.MultiBinary(self._objective_width),
+            "alert_level": spaces.MultiBinary(config.alert_levels),
+            "budget_fraction": spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
+        }
+        if config.expose_exact_risk:
+            channels["detection_risk"] = spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32)
+        self.observation_space = spaces.Dict(channels)
         self._reset_state()
 
     # ------------------------------------------------------------------ state
 
     def _reset_state(self) -> None:
-        host_count = _width(self.scenario.hosts)
-        self._discovered_hosts = np.zeros(host_count, dtype=np.int8)
-        self._reachable_hosts = np.zeros(host_count, dtype=np.int8)
-        self._known_services = np.zeros(_width(self.scenario.services), dtype=np.int8)
-        self._enumerated_services = np.zeros(_width(self.scenario.services), dtype=np.int8)
-        self._validated_vulnerabilities = np.zeros(
-            _width(self.scenario.vulnerabilities), dtype=np.int8
-        )
-        self._acquired_credentials = np.zeros(_width(self.scenario.credentials), dtype=np.int8)
-        self._acquired_privileges = np.zeros(_width(self.scenario.privileges), dtype=np.int8)
+        self._discovered_hosts = np.zeros(self._host_width, dtype=np.int8)
+        self._reachable_hosts = np.zeros(self._host_width, dtype=np.int8)
+        self._known_services = np.zeros(self._service_width, dtype=np.int8)
+        self._enumerated_services = np.zeros(self._service_width, dtype=np.int8)
+        self._validated_vulnerabilities = np.zeros(self._vulnerability_width, dtype=np.int8)
+        self._acquired_credentials = np.zeros(self._credential_width, dtype=np.int8)
+        self._acquired_privileges = np.zeros(self._privilege_width, dtype=np.int8)
+        self._collected_objectives = np.zeros(self._objective_width, dtype=np.int8)
         for host_id in self._entry_hosts:
             index = self._host_index[host_id]
             self._discovered_hosts[index] = 1
@@ -233,6 +340,11 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._finished = False
         self._detected = False
         self._objective_captured = False
+        self._host_hardening = np.zeros(self._host_width, dtype=np.float32)
+        self._last_response_step = 0
+        self._defender_actions = 0
+        self._revoked_credentials = 0
+        self._last_defender_response = DefenderResponse()
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -243,10 +355,16 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         return self._observation(), {
             "action_mask": self.action_mask(),
             "detection_risk": self._detection_risk,
+            "alert_level": self.alert_level(),
             "path_cost": self._path_cost,
             "steps": self._steps,
+            "steps_remaining": self.step_budget,
             "target_count": self.target_count,
+            "defender_action": "none",
+            "defender_actions": 0,
+            "revoked_credentials": 0,
             "objective_captured": False,
+            "collected_objectives": 0,
             "detected": False,
         }
 
@@ -306,6 +424,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         else:
             reward += self._apply(action_type, target)
         self._steps += 1
+        self._apply_defender()
         reward += self._detection_risk * self.reward_config.detection_risk
         if self._detection_risk >= self.dynamics.detection_threshold and not self._terminated:
             self._detected = True
@@ -323,10 +442,16 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "affected_nodes": self._affected_nodes,
             "outcome": self._outcome,
             "detection_risk": self._detection_risk,
+            "alert_level": self.alert_level(),
+            "defender_action": self._last_defender_response.name,
+            "defender_actions": self._defender_actions,
+            "revoked_credentials": self._revoked_credentials,
             "detected": self._detected,
             "objective_captured": self._objective_captured,
+            "collected_objectives": int(self._collected_objectives.sum()),
             "path_cost": self._path_cost,
             "steps": self._steps,
+            "steps_remaining": self.step_budget - self._steps,
             "target_count": self.target_count,
             "valid_action": valid,
         }
@@ -416,6 +541,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
 
     def _collectable_objectives(self) -> Iterator[int]:
         for index, objective in enumerate(self.scenario.objectives):
+            if self._collected_objectives[index]:
+                continue
             if self._reachable_hosts[self._host_index[objective.host_id]] and (
                 objective.required_privilege_id is None
                 or self._acquired_privileges[self._privilege_index[objective.required_privilege_id]]
@@ -530,11 +657,15 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         return self.reward_config.privilege_escalation
 
     def _collect_objective(self, target: int) -> float:
+        """Collect one objective; the episode ends only once every objective is held."""
+
         objective = self.scenario.objectives[target]
+        self._collected_objectives[target] = 1
         self._affected_nodes = (objective.host_id, objective.id)
-        self._objective_captured = True
-        self._terminated = True
         self._outcome = "objective"
+        if int(self._collected_objectives.sum()) == len(self.scenario.objectives):
+            self._objective_captured = True
+            self._terminated = True
         return self.reward_config.objective
 
     def _failed_attempt(self, nodes: tuple[str, ...]) -> float:
@@ -545,8 +676,47 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
 
     # -------------------------------------------------------------- helpers
 
+    def _apply_defender(self) -> None:
+        """Let the simulated defender respond to the attacker's trajectory."""
+
+        response = decide_response(
+            self.defender,
+            DefenderState(
+                detection_risk=self._detection_risk,
+                steps_since_response=self._steps - self._last_response_step,
+                acquired_credentials=tuple(
+                    int(index) for index in np.flatnonzero(self._acquired_credentials)
+                ),
+            ),
+            self.np_random,
+        )
+        self._last_defender_response = response
+        if response.name == "none":
+            return
+        self._last_response_step = self._steps
+        self._defender_actions += 1
+        if response.harden:
+            self._host_hardening[np.flatnonzero(self._reachable_hosts)] += (
+                self.defender.hardening_step
+            )
+        if response.revoke_credential is not None:
+            self._revoke_credential(response.revoke_credential)
+
+    def _revoke_credential(self, index: int) -> None:
+        """Drop one simulated credential, and the privilege it alone granted."""
+
+        self._acquired_credentials[index] = 0
+        self._revoked_credentials += 1
+        privilege_id = self.scenario.credentials[index].privilege_id
+        still_granted = any(
+            self._acquired_credentials[other] and credential.privilege_id == privilege_id
+            for other, credential in enumerate(self.scenario.credentials)
+        )
+        if not still_granted:
+            self._acquired_privileges[self._privilege_index[privilege_id]] = 0
+
     def _raise_risk(self, increment: float) -> None:
-        self._detection_risk = min(1.0, self._detection_risk + increment)
+        self._detection_risk = min(1.0, self._detection_risk + increment * self._risk_scale)
 
     def _success_probability(self, exploitability: float | None) -> float:
         if not self.dynamics.stochastic:
@@ -569,8 +739,18 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             return None
         return catalogue[target]
 
+    def alert_level(self) -> int:
+        """Quantize the true detection risk into the band the agent can observe."""
+
+        levels = self.observation_config.alert_levels
+        threshold = self.dynamics.detection_threshold
+        band = int(self._detection_risk / threshold * levels)
+        return min(levels - 1, max(0, band))
+
     def _observation(self) -> Observation:
-        return {
+        alert = np.zeros(self.observation_config.alert_levels, dtype=np.int8)
+        alert[self.alert_level()] = 1
+        observation: Observation = {
             "discovered_hosts": self._discovered_hosts.copy(),
             "reachable_hosts": self._reachable_hosts.copy(),
             "known_services": self._known_services.copy(),
@@ -578,9 +758,15 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             "validated_vulnerabilities": self._validated_vulnerabilities.copy(),
             "acquired_credentials": self._acquired_credentials.copy(),
             "acquired_privileges": self._acquired_privileges.copy(),
-            "detection_risk": np.array([self._detection_risk], dtype=np.float32),
-            "steps_remaining": np.array([self.step_budget - self._steps], dtype=np.float32),
+            "collected_objectives": self._collected_objectives.copy(),
+            "alert_level": alert,
+            "budget_fraction": np.array(
+                [(self.step_budget - self._steps) / self.step_budget], dtype=np.float32
+            ),
         }
+        if self.observation_config.expose_exact_risk:
+            observation["detection_risk"] = np.array([self._detection_risk], dtype=np.float32)
+        return observation
 
     def _host_detection_increment(self, host_id: str) -> float:
         probabilities = [
@@ -588,6 +774,10 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             for control in self.scenario.security_controls
             if host_id in control.host_ids
         ]
-        if not probabilities:
-            return 0.05
-        return max(0.02, (sum(probabilities) / len(probabilities)) * 0.15)
+        base = (
+            0.05
+            if not probabilities
+            else max(0.02, (sum(probabilities) / len(probabilities)) * 0.15)
+        )
+        hardening = float(self._host_hardening[self._host_index[host_id]])
+        return base * (1.0 + hardening)

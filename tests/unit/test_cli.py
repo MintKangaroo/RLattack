@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from rlattack import cli
+from rlattack.curriculum import DEFAULT_CURRICULUM, StageEnv
 from rlattack.env import Action, AttackPathEnv
 
 
@@ -250,3 +251,190 @@ def test_cli_demo_reports_a_budget_limited_episode(
 
     assert "outcome  : incomplete" in output
     assert "dynamics : deterministic" in output
+
+
+def test_cli_benchmark_prints_paired_significance_tests(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        cli.main(
+            [
+                "benchmark",
+                "--size",
+                "small",
+                "--difficulty",
+                "hard",
+                "--episodes",
+                "6",
+                "--resamples",
+                "200",
+                "--compare-to",
+                "greedy",
+                "--metric",
+                "steps",
+                "--output",
+                str(tmp_path / "b.jsonl"),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+
+    assert "paired vs greedy on steps" in output
+    assert "shortest-path" in output
+
+
+def test_cli_skips_significance_tests_for_an_unknown_reference(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        cli.main(
+            [
+                "benchmark",
+                "--size",
+                "small",
+                "--episodes",
+                "2",
+                "--compare-to",
+                "nobody",
+                "--output",
+                str(tmp_path / "b.jsonl"),
+            ]
+        )
+        == 0
+    )
+
+    assert "unknown reference 'nobody'" in capsys.readouterr().out
+
+
+def test_cli_ablation_compares_reward_strategies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "ablation.csv"
+
+    assert (
+        cli.main(
+            [
+                "ablation",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--episodes",
+                "4",
+                "--strategies",
+                "sparse",
+                "shaped",
+                "--resamples",
+                "200",
+                "--format",
+                "csv",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+
+    assert "RLAttack reward ablation" in printed
+    assert "paired vs shaped on reward" in printed
+    assert "baseline heuristics ignore the reward signal" in printed
+    assert "sparse," in output.read_text(encoding="utf-8")
+
+
+def test_cli_transfer_evaluates_every_scenario_class(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "transfer.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "transfer",
+                "--agent",
+                "greedy",
+                "--episodes",
+                "2",
+                "--deterministic",
+                "--resamples",
+                "100",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert "RLAttack transfer evaluation" in printed
+    assert "large/hard" in printed
+    assert len({row["agent"] for row in rows}) == 9
+
+
+def test_cli_transfer_can_evaluate_a_trained_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class StubAgent:
+        def predict(self, observation: object, info: dict[str, object]) -> np.int64:
+            return np.int64(int(Action.STOP) * int(cast(int, info["target_count"])))
+
+    monkeypatch.setattr(cli, "load_policy", lambda path, algorithm: StubAgent())
+
+    assert (
+        cli.main(
+            [
+                "transfer",
+                "--episodes",
+                "2",
+                "--resamples",
+                "100",
+                "--policy",
+                str(tmp_path / "model.zip"),
+                "--output",
+                str(tmp_path / "transfer.csv"),
+                "--format",
+                "csv",
+            ]
+        )
+        == 0
+    )
+
+    assert "policy    : ppo" in capsys.readouterr().out
+
+
+def test_cli_curriculum_training_carries_one_policy_across_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    captured: dict[str, object] = {}
+
+    def record(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        captured["stages"] = len(builders)
+        captured["timesteps"] = timesteps
+        captured["algorithm"] = algorithm
+        first = cast(Callable[[], object], builders[0])()
+        assert isinstance(first, StageEnv)
+
+    monkeypatch.setattr(cli, "train_curriculum", record)
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--algorithm",
+                "ppo",
+                "--curriculum",
+                "--output-dir",
+                str(tmp_path / "curriculum"),
+            ]
+        )
+        == 0
+    )
+
+    assert captured["stages"] == len(DEFAULT_CURRICULUM)
+    assert captured["algorithm"] == "ppo"
+    assert "curriculum" in capsys.readouterr().out

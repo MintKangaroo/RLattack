@@ -1,6 +1,6 @@
 # Dashboard and API
 
-RLAttack `v0.3.0`은 simulation 결과를 탐색하는 local FastAPI dashboard를 제공합니다.
+RLAttack `v0.4.0`은 simulation 결과를 탐색하는 local FastAPI dashboard를 제공합니다.
 이 API가 실행하는 것은 검증된 `AttackPathEnv`뿐이며 scanner, shell, 외부 target client는
 포함하지 않습니다.
 
@@ -44,6 +44,7 @@ Interactive Simulation Observatory HTML을 반환합니다. 모든 CSS와 JavaSc
 | `step_budget` | integer | `64` | 1–512 |
 | `benchmark_episodes` | integer | `8` | 1–256 |
 | `stochastic` | boolean | `true` | `true`, `false` |
+| `defender` | string | `passive` | `passive`, `adaptive` |
 
 예:
 
@@ -80,12 +81,35 @@ rlattack benchmark --episodes 64 --format csv --output artifacts/benchmark.csv \
 각 record는 `agent`, `seed`, `success`, `detected`, `steps`, `reward`,
 `detection_risk`, `path_cost`를 포함합니다.
 
+## Reward ablation
+
+```bash
+rlattack ablation --agent greedy --episodes 32 --compare-to shaped
+```
+
+Scenario, seed, dynamics, defender를 고정하고 reward strategy만 바꿔 paired 유의성 검정을
+보고합니다. Heuristic baseline은 reward signal을 사용하지 않으므로, 행동 차이는 학습된
+policy에서만 나타납니다.
+
+## Transfer evaluation
+
+```bash
+rlattack transfer --episodes 32 --policy artifacts/policies/final.zip \
+  --policy-algorithm ppo --output artifacts/transfer.jsonl
+```
+
+9개 (size × difficulty) class 전체를 공유 seed로 평가하고, 기준 class 대비 paired 검정을
+출력합니다.
+
 ## Training
 
 ```bash
 python -m pip install -e ".[training]"
 rlattack train --algorithm ppo --size medium --timesteps 200000
+rlattack train --algorithm ppo --curriculum
 ```
+
+`--curriculum`은 하나의 policy를 여러 stage에 걸쳐 이어서 학습합니다.
 
 ## Portable report
 

@@ -10,7 +10,7 @@
     <a href="https://github.com/MintKangaroo/RLattack/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MintKangaroo/RLattack/actions/workflows/ci.yml/badge.svg?branch=main"></a>
     <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-56f39a?logo=python&logoColor=07100e">
     <img alt="Coverage 100%" src="https://img.shields.io/badge/coverage-100%25-56f39a">
-    <img alt="Version 0.3.0" src="https://img.shields.io/badge/version-0.3.0-71a7ff">
+    <img alt="Version 0.3.0" src="https://img.shields.io/badge/version-0.4.0-71a7ff">
     <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-d7e2dc"></a>
   </p>
   <p>
@@ -144,17 +144,29 @@ rlattack scenario \
 | Command | 역할 |
 | --- | --- |
 | `rlattack demo` | Episode와 4개 baseline benchmark를 실행하고 HTML report 생성 |
-| `rlattack benchmark` | 다중 seed generalization benchmark 실행과 JSONL/CSV export |
+| `rlattack benchmark` | 다중 seed generalization benchmark와 paired 유의성 검정 |
+| `rlattack ablation` | reward strategy ablation과 유의성 검정 |
+| `rlattack transfer` | 9개 scenario class 전체에 대한 전이 평가 |
 | `rlattack train` | optional DQN/PPO policy 학습 (`.[training]` 필요) |
 | `rlattack scenario` | 검증된 scenario를 JSON으로 내보내기 |
 | `rlattack dashboard` | loopback 전용 interactive dashboard와 API 실행 |
 | `rlattack --version` | 설치된 package version 확인 |
 
-모든 experiment command는 `--deterministic`으로 transition uncertainty를 끌 수 있습니다.
+모든 experiment command가 공유하는 실험 조건 flag입니다.
+
+| Flag | 의미 |
+| --- | --- |
+| `--deterministic` | transition uncertainty를 끄고 모든 valid action을 성공시킵니다 |
+| `--defender passive\|adaptive` | 대조군(passive)과 처치군(adaptive defender) |
+| `--observation scenario\|curriculum` | scenario 크기에 맞춘 관측 vs 고정 capacity |
+| `--compare-to`, `--metric`, `--alpha`, `--resamples` | paired 유의성 검정 설정 |
 
 ```bash
 rlattack benchmark --size medium --difficulty hard --episodes 64 \
   --output artifacts/benchmark.jsonl
+
+rlattack ablation --agent greedy --episodes 32 --compare-to shaped
+rlattack transfer --policy artifacts/policies/final.zip --episodes 32
 ```
 
 `python -m rlattack`도 같은 CLI를 실행합니다.
@@ -226,11 +238,22 @@ Observation은 오직 agent가 현재까지 관찰한 simulation state로 구성
 | Observation | 의미 |
 | --- | --- |
 | `discovered_hosts` / `reachable_hosts` | 발견·도달 상태 |
-| `known_services` | 확인한 service |
+| `known_services` / `enumerated_services` | 확인·열거한 service |
 | `validated_vulnerabilities` | 검증된 synthetic weakness |
 | `acquired_credentials` / `acquired_privileges` | simulation 내부 상태 |
-| `detection_risk` | 누적 normalized risk |
-| `steps_remaining` | 남은 episode budget |
+| `collected_objectives` | 수집한 objective |
+| `alert_level` | **양자화된** 경보 단계 one-hot (정확한 risk가 아님) |
+| `budget_fraction` | 남은 episode budget 비율 |
+
+### 부분 관측
+
+공격자는 방어자의 정확한 의심 점수를 읽을 수 없습니다. Agent는 `alert_level`만 보고,
+정확한 `detection_risk`는 보고·분석용으로 `info`에만 남습니다
+(`ObservationConfig(expose_exact_risk=True)`로 되돌릴 수 있습니다).
+
+또한 `ObservationConfig.for_curriculum()`은 모든 channel을 고정 폭으로 padding합니다.
+Vector 길이가 네트워크 크기를 알려주지 않게 되고, 동시에 `small`에서 학습한 policy를
+`large`에 그대로 적용할 수 있습니다. Padding은 시뮬레이션에 영향을 주지 않습니다.
 
 `enumerated_services`도 관찰 가능한 상태로 노출됩니다.
 
@@ -293,6 +316,9 @@ flowchart LR
 | `rlattack.agents` | Random, Greedy, Rule-based, Graph Oracle |
 | `rlattack.experiment` | episode trace와 dashboard view model의 단일 실행 엔진 |
 | `rlattack.evaluation` | 분산·신뢰구간을 포함한 generalization benchmark metric |
+| `rlattack.defender` | 공격자 궤적에 반응하는 simulated defender |
+| `rlattack.stats` | paired permutation test와 bootstrap 신뢰구간 |
+| `rlattack.curriculum` | scenario stage와 전이 평가 |
 | `rlattack.policies` | 학습된 Stable-Baselines3 checkpoint의 Agent adapter |
 | `rlattack.export` | episode 단위 JSONL/CSV batch export |
 | `rlattack.explain` | action explanation과 visited-node overlay |
@@ -358,7 +384,7 @@ make audit
 
 - Ruff lint + format
 - strict mypy
-- 118 tests (unit + reproducibility/solvability integration tests)
+- 159 tests (unit + reproducibility/solvability integration tests)
 - package statement coverage 100%
 - Gymnasium environment checker
 - FastAPI dashboard route와 loopback bind test
@@ -402,10 +428,14 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 - [x] Per-seed generalization benchmark with dispersion and confidence intervals
 - [x] Reproducible stochastic dynamics and detection-threshold termination
 - [x] Trained DQN/PPO checkpoint benchmarking through the shared Agent protocol
+- [x] Partial observability (quantized alert level, size-hiding capacities)
+- [x] Adaptive defender (monitoring hardening, credential revocation)
+- [x] Multi-objective episodes and paired significance testing
+- [x] Scenario curriculum and transfer evaluation across all nine classes
 
-현재 `v0.3.0`은 연구용 end-to-end workflow를 제공합니다. 실제 환경의 다양성을 합성 graph가
+현재 `v0.4.0`은 연구용 end-to-end workflow를 제공합니다. 실제 환경의 다양성을 합성 graph가
 완전히 대표하지 않으며, explainability output은 인과적 설명이나 보안 보장을 의미하지 않습니다.
-다음 확장 후보(부분 관측, 능동적 defender model, 다목적 시나리오)는
+다음 확장 후보(curriculum policy 학습·공개, defender 반응 지연 모델링)는
 [Roadmap](docs/roadmap.md)에서 관리합니다. 변경 이력은 [CHANGELOG](CHANGELOG.md)를 참고하세요.
 
 ## 문서

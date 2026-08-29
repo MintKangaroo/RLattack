@@ -10,6 +10,7 @@ from rlattack.experiment import (
     build_dashboard_data,
     create_agent,
     run_episode,
+    run_reward_ablation,
 )
 from rlattack.generator import generate_scenario
 
@@ -26,6 +27,8 @@ def test_experiment_config_validates_public_inputs() -> None:
         {"benchmark_episodes": 0},
         {"step_budget": 10_000},
         {"benchmark_episodes": 10_000},
+        {"observation": "partial"},
+        {"defender": "chaotic"},
     )
     for values in invalid_values:
         with pytest.raises(ValueError):
@@ -110,3 +113,36 @@ def test_dashboard_data_uses_default_config() -> None:
 
     assert data["config"]["size"] == "medium"
     assert data["reward"]["strategy"] == "risk-aware"
+
+
+def test_defender_mode_selects_the_experimental_condition() -> None:
+    assert ExperimentConfig().defender_config().enabled is False
+    assert ExperimentConfig(defender="adaptive").defender_config().enabled is True
+
+
+def test_curriculum_observation_mode_fixes_the_interface_widths() -> None:
+    scenario_sized = ExperimentConfig().observation_config()
+    curriculum = ExperimentConfig(observation="curriculum").observation_config()
+
+    assert scenario_sized.host_capacity is None
+    assert curriculum.host_capacity == 16
+
+
+def test_reward_ablation_holds_everything_but_the_reward_fixed() -> None:
+    config = ExperimentConfig(
+        size="small",
+        difficulty="easy",
+        seed=5,
+        benchmark_episodes=3,
+        stochastic=False,
+    )
+
+    results = run_reward_ablation(config, ("sparse", "shaped"))
+
+    assert set(results) == {"sparse", "shaped"}
+    assert all(metric.episodes == 3 for metric in results.values())
+    steps = {tuple(outcome.steps for outcome in metric.outcomes) for metric in results.values()}
+    assert len(steps) == 1, "only the reward may differ between ablation arms"
+
+    with pytest.raises(ValueError, match="at least one reward strategy"):
+        run_reward_ablation(config, ())

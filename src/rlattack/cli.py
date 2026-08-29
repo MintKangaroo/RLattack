@@ -10,22 +10,38 @@ from typing import cast
 
 from rlattack import __version__
 from rlattack.agents import Agent
+from rlattack.curriculum import (
+    DEFAULT_CURRICULUM,
+    CurriculumStage,
+    StageEnv,
+    evaluate_transfer,
+    stage_env_factory,
+)
 from rlattack.dashboard import run_dashboard
-from rlattack.env import AttackPathEnv
+from rlattack.env import AttackPathEnv, ObservationConfig
+from rlattack.evaluation import BenchmarkMetrics
 from rlattack.experiment import (
+    REWARD_STRATEGIES,
     AgentName,
+    DefenderMode,
     ExperimentConfig,
+    ObservationMode,
+    benchmark_seeds,
     build_dashboard_data,
+    create_agent,
     run_benchmarks,
+    run_reward_ablation,
 )
 from rlattack.export import write_results
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.policies import Algorithm, load_policy
 from rlattack.report import write_dashboard_report
 from rlattack.reward import RewardStrategy
+from rlattack.stats import compare_benchmarks
 from rlattack.training import (
     DQNTrainingConfig,
     PPOTrainingConfig,
+    train_curriculum,
     train_dqn,
     train_ppo,
     training_dependencies_available,
@@ -53,6 +69,65 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="disable transition uncertainty so every valid action succeeds",
     )
+    parser.add_argument(
+        "--observation",
+        choices=("scenario", "curriculum"),
+        default="scenario",
+        help="scenario-sized observations, or fixed capacities that transfer across sizes",
+    )
+    parser.add_argument(
+        "--defender",
+        choices=("passive", "adaptive"),
+        default="passive",
+        help="passive is the control condition; adaptive responds to the attacker",
+    )
+
+
+TRAINING_SEEDS: tuple[int, ...] = tuple(range(32))
+
+
+def _add_significance_arguments(parser: argparse.ArgumentParser, *, default_reference: str) -> None:
+    parser.add_argument(
+        "--compare-to",
+        default=default_reference,
+        help="reference for the paired significance test",
+    )
+    parser.add_argument(
+        "--metric",
+        choices=("reward", "steps", "success"),
+        default="reward",
+        help="per-episode metric the significance test compares",
+    )
+    parser.add_argument("--alpha", type=float, default=0.05)
+    parser.add_argument(
+        "--resamples",
+        type=int,
+        default=2_000,
+        help="permutation and bootstrap iterations",
+    )
+
+
+def _print_comparisons(metrics: dict[str, BenchmarkMetrics], args: argparse.Namespace) -> None:
+    """Print paired significance tests against the chosen reference."""
+
+    if args.compare_to not in metrics:
+        print(f"  (skipping significance tests: unknown reference '{args.compare_to}')")
+        return
+    print(f"  paired vs {args.compare_to} on {args.metric} (alpha={args.alpha})")
+    for comparison in compare_benchmarks(
+        metrics,
+        args.compare_to,
+        metric=args.metric,
+        alpha=args.alpha,
+        iterations=args.resamples,
+    ):
+        marker = "*" if comparison.significant else " "
+        print(
+            f"  {marker} {comparison.candidate:<14} "
+            f"diff={comparison.mean_difference:+8.3f} "
+            f"CI=[{comparison.ci_low:+8.3f}, {comparison.ci_high:+8.3f}] "
+            f"p={comparison.p_value:.4f}"
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -97,6 +172,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional local Stable-Baselines3 checkpoint to benchmark alongside the baselines",
     )
     benchmark.add_argument("--policy-algorithm", choices=("dqn", "ppo"), default="dqn")
+    _add_significance_arguments(benchmark, default_reference="greedy")
+
+    ablation = commands.add_parser(
+        "ablation", help="compare reward strategies for one agent on identical seeds"
+    )
+    _add_experiment_arguments(ablation)
+    ablation.add_argument(
+        "--strategies",
+        nargs="+",
+        choices=("sparse", "shaped", "risk-aware", "cost-aware"),
+        default=list(REWARD_STRATEGIES),
+    )
+    ablation.add_argument("--output", type=Path, default=Path("artifacts/ablation.jsonl"))
+    ablation.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    _add_significance_arguments(ablation, default_reference="shaped")
+
+    transfer = commands.add_parser(
+        "transfer",
+        help="evaluate one policy on every scenario class to measure generalization",
+    )
+    _add_experiment_arguments(transfer)
+    transfer.add_argument(
+        "--policy",
+        type=Path,
+        help="optional local Stable-Baselines3 checkpoint; defaults to the --agent baseline",
+    )
+    transfer.add_argument("--policy-algorithm", choices=("dqn", "ppo"), default="ppo")
+    transfer.add_argument("--output", type=Path, default=Path("artifacts/transfer.jsonl"))
+    transfer.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    _add_significance_arguments(transfer, default_reference="small/easy")
 
     train = commands.add_parser(
         "train", help="train an optional Stable-Baselines3 policy on generated scenarios"
@@ -107,7 +212,18 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--seed", type=int, default=42)
     train.add_argument("--timesteps", type=int, default=10_000)
     train.add_argument("--step-budget", type=int, default=64)
+    train.add_argument(
+        "--observation",
+        choices=("scenario", "curriculum"),
+        default="curriculum",
+        help="fixed capacities let one policy transfer across scenario sizes",
+    )
     train.add_argument("--output-dir", type=Path, default=Path("artifacts/policies"))
+    train.add_argument(
+        "--curriculum",
+        action="store_true",
+        help="train one policy across the staged scenario curriculum",
+    )
     return parser
 
 
@@ -121,6 +237,8 @@ def _config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         step_budget=args.step_budget,
         benchmark_episodes=args.episodes,
         stochastic=not args.deterministic,
+        observation=cast(ObservationMode, args.observation),
+        defender=cast(DefenderMode, args.defender),
     )
 
 
@@ -137,6 +255,7 @@ def _run_benchmark(args: argparse.Namespace) -> int:
     print("RLAttack generalization benchmark")
     print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
     print(f"  dynamics  : {'stochastic' if config.stochastic else 'deterministic'}")
+    print(f"  defender  : {config.defender}")
     for name, metric in metrics.items():
         print(
             f"  {name:<14} success={metric.success_rate:5.1%} "
@@ -145,6 +264,97 @@ def _run_benchmark(args: argparse.Namespace) -> int:
             f"reward={metric.mean_reward:7.2f} "
             f"[{metric.reward_ci_low:7.2f}, {metric.reward_ci_high:7.2f}]"
         )
+    _print_comparisons(metrics, args)
+    print(f"  export    : {output}")
+    return 0
+
+
+def _run_ablation(args: argparse.Namespace) -> int:
+    """Compare reward strategies for one agent on identical seeds."""
+
+    config = _config_from_args(args)
+    strategies = [cast(RewardStrategy, strategy) for strategy in args.strategies]
+    metrics = run_reward_ablation(config, strategies)
+    output = write_results(metrics, args.output, args.format)
+    print("RLAttack reward ablation")
+    print(f"  agent     : {config.agent}")
+    print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
+    print(f"  defender  : {config.defender}")
+    for name, metric in metrics.items():
+        print(
+            f"  {name:<14} success={metric.success_rate:5.1%} "
+            f"detected={metric.detection_rate:5.1%} "
+            f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
+            f"reward={metric.mean_reward:7.2f}"
+        )
+    print(
+        "  note      : baseline heuristics ignore the reward signal, so a behavioural"
+        " difference here requires a trained policy"
+    )
+    _print_comparisons(metrics, args)
+    print(f"  export    : {output}")
+    return 0
+
+
+def _stage_env_builder(
+    stage: CurriculumStage, step_budget: int, observation_config: ObservationConfig
+) -> Callable[[], StageEnv]:
+    """Return a zero-argument environment builder for one curriculum stage."""
+
+    factory = stage_env_factory(
+        stage,
+        step_budget=step_budget,
+        observation_config=observation_config,
+    )
+
+    def build() -> StageEnv:
+        return StageEnv(stage, TRAINING_SEEDS, factory)
+
+    return build
+
+
+def _run_transfer(args: argparse.Namespace) -> int:
+    """Evaluate one policy on every scenario class with a shared seed list."""
+
+    config = _config_from_args(args)
+    if args.policy is not None:
+        policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
+        label = args.policy_algorithm
+
+        def agent_factory(seed: int) -> Agent:
+            del seed
+            return policy
+    else:
+        label = config.agent
+
+        def agent_factory(seed: int) -> Agent:
+            return create_agent(
+                config.agent,
+                generate_scenario(config.size, config.difficulty, seed),
+                seed=seed,
+            )
+
+    metrics = evaluate_transfer(
+        agent_factory,
+        benchmark_seeds(config),
+        step_budget=config.step_budget,
+        reward_strategy=config.reward_strategy,
+        dynamics=config.dynamics(),
+        defender=config.defender_config(),
+    )
+    output = write_results(metrics, args.output, args.format)
+    print("RLAttack transfer evaluation")
+    print(f"  policy    : {label}")
+    print(f"  seeds     : {config.benchmark_episodes} shared across every scenario class")
+    print(f"  defender  : {config.defender}")
+    for name, metric in metrics.items():
+        print(
+            f"  {name:<14} success={metric.success_rate:5.1%} "
+            f"detected={metric.detection_rate:5.1%} "
+            f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
+            f"reward={metric.mean_reward:7.2f}"
+        )
+    _print_comparisons(metrics, args)
     print(f"  export    : {output}")
     return 0
 
@@ -161,9 +371,30 @@ def _run_training(args: argparse.Namespace) -> int:
         args.seed,
     )
 
-    def env_factory() -> AttackPathEnv:
-        return AttackPathEnv(scenario, step_budget=args.step_budget)
+    observation_config = (
+        ObservationConfig.for_curriculum()
+        if args.observation == "curriculum"
+        else ObservationConfig()
+    )
 
+    def env_factory() -> AttackPathEnv:
+        return AttackPathEnv(
+            scenario,
+            step_budget=args.step_budget,
+            observation_config=observation_config,
+        )
+
+    if args.curriculum:
+        stages = DEFAULT_CURRICULUM
+        train_curriculum(
+            [_stage_env_builder(stage, args.step_budget, observation_config) for stage in stages],
+            [stage.timesteps for stage in stages],
+            PPOTrainingConfig(seed=args.seed, output_dir=args.output_dir),
+            algorithm=args.algorithm,
+        )
+        labels = ", ".join(stage.label for stage in stages)
+        print(f"Trained {args.algorithm} curriculum ({labels}) into {args.output_dir.resolve()}")
+        return 0
     if args.algorithm == "dqn":
         train_dqn(
             env_factory,
@@ -211,6 +442,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "benchmark":
         return _run_benchmark(args)
+    if args.command == "ablation":
+        return _run_ablation(args)
+    if args.command == "transfer":
+        return _run_transfer(args)
     if args.command == "train":
         return _run_training(args)
 
