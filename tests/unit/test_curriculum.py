@@ -18,8 +18,8 @@ from rlattack.env import DynamicsConfig, ObservationConfig
 from rlattack.generator import generate_scenario
 
 
-def greedy_factory(seed: int) -> Agent:
-    del seed
+def greedy_factory(stage: CurriculumStage, seed: int) -> Agent:
+    del stage, seed
     return GreedyAgent()
 
 
@@ -78,8 +78,11 @@ def test_stage_env_resamples_the_scenario_between_episodes() -> None:
 
 
 def test_transfer_evaluation_covers_every_requested_stage() -> None:
-    def oracle_factory(seed: int) -> Agent:
-        return ShortestPathOracle(generate_scenario("small", "easy", seed))
+    seen: list[str] = []
+
+    def oracle_factory(stage: CurriculumStage, seed: int) -> Agent:
+        seen.append(stage.label)
+        return ShortestPathOracle(generate_scenario(stage.size, stage.difficulty, seed))
 
     stages = (CurriculumStage("small", "easy"), CurriculumStage("small", "medium"))
     results = evaluate_transfer(
@@ -91,6 +94,9 @@ def test_transfer_evaluation_covers_every_requested_stage() -> None:
 
     assert set(results) == {"small/easy", "small/medium"}
     assert all(metric.episodes == 2 for metric in results.values())
+    assert set(seen) == {"small/easy", "small/medium"}, (
+        "a graph-aware baseline must be built from the stage it acts in"
+    )
 
     with pytest.raises(ValueError, match="at least one curriculum stage"):
         evaluate_transfer(greedy_factory, (1,), ())

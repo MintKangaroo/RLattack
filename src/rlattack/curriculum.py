@@ -159,8 +159,19 @@ class StageEnv(gym.Env[Observation, np.int64]):
         return masks
 
 
+def _bind_stage(
+    agent_factory: Callable[[CurriculumStage, int], Agent], stage: CurriculumStage
+) -> Callable[[int], Agent]:
+    """Adapt a stage-aware factory to the seed-only factory the evaluator expects."""
+
+    def build(seed: int) -> Agent:
+        return agent_factory(stage, seed)
+
+    return build
+
+
 def evaluate_transfer(
-    agent_factory: Callable[[int], Agent],
+    agent_factory: Callable[[CurriculumStage, int], Agent],
     seeds: tuple[int, ...],
     stages: Sequence[CurriculumStage] = ALL_STAGES,
     *,
@@ -173,6 +184,10 @@ def evaluate_transfer(
 
     Every stage uses the same seed list, so results across scenario classes are paired
     and can be compared with :mod:`rlattack.stats`.
+
+    ``agent_factory`` receives the stage as well as the seed. A graph-aware baseline
+    must be built from the scenario it will actually act in; building it from one fixed
+    scenario class silently mis-indexes it on every other stage.
     """
 
     if not stages:
@@ -180,7 +195,7 @@ def evaluate_transfer(
     return {
         stage.label: evaluate_agent(
             stage.label,
-            agent_factory,
+            _bind_stage(agent_factory, stage),
             stage_env_factory(
                 stage,
                 step_budget=step_budget,

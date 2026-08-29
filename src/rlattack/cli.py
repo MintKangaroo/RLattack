@@ -391,16 +391,17 @@ def _run_transfer(args: argparse.Namespace) -> int:
         policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
         label = args.policy_algorithm
 
-        def agent_factory(seed: int) -> Agent:
-            del seed
+        def agent_factory(stage: CurriculumStage, seed: int) -> Agent:
+            del stage, seed
             return policy
     else:
         label = config.agent
 
-        def agent_factory(seed: int) -> Agent:
+        def agent_factory(stage: CurriculumStage, seed: int) -> Agent:
+            # The baseline must see the scenario it will act in, not the configured one.
             return create_agent(
                 config.agent,
-                generate_scenario(config.size, config.difficulty, seed),
+                generate_scenario(stage.size, stage.difficulty, seed),
                 seed=seed,
             )
 
@@ -415,6 +416,7 @@ def _run_transfer(args: argparse.Namespace) -> int:
     output = write_results(metrics, args.output, args.format)
     print("RLAttack transfer evaluation")
     print(f"  policy    : {label}")
+    print("  observati.: curriculum (transfer requires one shared interface)")
     print(f"  seeds     : {config.benchmark_episodes} shared across every scenario class")
     print(f"  defender  : {config.defender}")
     for name, metric in metrics.items():
