@@ -1,5 +1,8 @@
+from typing import cast
+
 import numpy as np
 import pytest
+from gymnasium import spaces
 
 from rlattack.agents import Agent, GreedyAgent, ShortestPathOracle
 from rlattack.curriculum import (
@@ -66,7 +69,9 @@ def test_stage_env_resamples_the_scenario_between_episodes() -> None:
     observation, _, _, _, info = env.step(np.int64(env.current.encode_action(8, 0)))
 
     assert info["action_name"] == "stop"
-    assert set(observation) == set(env.observation_space.spaces)
+    channels = cast(spaces.Dict, env.current.observation_space)
+
+    assert set(observation) == set(channels.spaces)
 
     with pytest.raises(ValueError, match="at least one training seed"):
         StageEnv(stage, (), stage_env_factory(stage))
@@ -97,4 +102,6 @@ def test_transfer_accepts_an_explicit_observation_interface() -> None:
         observation_config=ObservationConfig(),
     )
 
-    assert factory(1).observation_space["discovered_hosts"].n == 3
+    channels = cast(spaces.Dict, factory(1).observation_space)
+
+    assert cast(spaces.MultiBinary, channels.spaces["discovered_hosts"]).n == 3
