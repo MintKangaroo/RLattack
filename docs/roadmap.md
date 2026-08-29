@@ -87,21 +87,28 @@
     configuration per episode, and charge for responding. (completed)
 45. Import published attack graphs as sanitized scenarios. (completed)
 
+## v0.8 - both sides learn
+
+46. A published-dataset mapping guide for the import contract. (completed)
+47. Train the attacker against a defender that learns alongside it. (completed)
+48. Report equilibria over the attacker x defender policy grid. (completed)
+49. Cost-model the defender's responses against an operational budget. (completed)
+50. Close the exploration gap under noisy discovery. (**partial**: the agent could not
+    observe which hosts it had probed, and giving it that memory moved success from 0%
+    to 6.2% - against the oracle's 68.8%, so the gap is narrowed, not closed)
+
 ## Next
 
-46. A published-dataset mapping guide: which fields of common attack-graph exports map
-    onto the import contract, with a worked example per format.
-47. Train the attacker with RL inside the game loop rather than selecting among fixed
-    baselines, so both learners are policies rather than one being a bandit.
-48. Report Nash-style equilibria over the attacker x defender policy grid instead of
-    one-sided sweeps.
-49. Cost-model the defender's responses against a budget, so suppression trades off
-    against operational load rather than a flat per-response penalty.
-50. Close the exploration gap under noisy discovery. The trained policy banks the
-    shaped reward on the entry host and stops rather than persisting through probe
-    failures; the oracle reaches 68.8% on the same condition, so the ceiling is the
-    learner, not the environment. Candidates: an intrinsic exploration bonus, a probe
-    budget the policy can observe, or much longer training.
+51. Finish item 50. The remaining distance is exploration, not observability: an
+    intrinsic novelty bonus, a shaped reward for a successful pivot rather than for
+    each discovery, or a budget well past 400k steps.
+52. Run an adversarial training study with `--adversarial` and report whether a policy
+    trained against a learning defender transfers better than one trained against a
+    fixed condition.
+53. Enrich the policy grid until the equilibrium is mixed; the current one has a
+    dominant attacker strategy, so it says little about strategic play.
+54. A held-out scenario family the generator cannot produce - imported topologies as a
+    test set rather than a demonstration.
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

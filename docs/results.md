@@ -163,6 +163,27 @@ A policy trained under noisy discovery also stops succeeding under *exact* adjac
 (0.0%), so this is not a strictly better policy; it is one adapted to a harder
 observation model at the cost of the easier one.
 
+### Giving the agent its own probe memory
+
+The diagnosis above was an exploration gap. Part of it turned out to be an
+*observability* gap: which hosts had been probed and missed lived only in the action
+mask, and a maskable learner uses the mask to filter its action distribution rather than
+as a network input. The policy could not distinguish an exhausted sweep from an
+untouched one, which makes stopping early a reasonable thing to do.
+
+Adding a `probed_hosts` observation channel and retraining at the same 400k budget:
+
+| Policy | Condition | Success | Detected | Reward |
+| --- | --- | --- | --- | --- |
+| Graph oracle | passive/noisy | **68.8%** | 31.2% | 7.37 |
+| MaskablePPO, noisy-trained | passive/noisy | 0.0% | 0.0% | 7.45 |
+| MaskablePPO, noisy-trained + probe memory | passive/noisy | **6.2%** | 0.0% | 8.51 |
+
+The channel moves success off zero and raises reward, so it was a real defect worth
+fixing - but 6.2% against the oracle's 68.8% means **the gap is narrowed, not closed**.
+The observability fix was necessary and is not sufficient; the remaining distance is
+still exploration, and 400k steps does not cover it.
+
 ## Robustness to the experimental conditions
 
 `medium/hard`, 32 shared seeds, paired against the control condition.
