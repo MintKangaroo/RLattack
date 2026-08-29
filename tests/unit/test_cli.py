@@ -593,6 +593,8 @@ def test_cli_game_reports_the_defenders_learned_preference(
                 "greedy",
                 "--rounds",
                 "10",
+                "--defender-policy",
+                "bandit",
                 "--output",
                 str(output),
             ]
@@ -665,3 +667,30 @@ def test_cli_sweep_trains_and_benchmarks_each_trial(
     assert "hyperparameter sweep" in printed
     assert "paired vs baseline" in printed
     assert {row["agent"] for row in rows} == {"baseline", "fast-lr"}
+
+
+def test_cli_game_supports_the_contextual_defender(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        cli.main(
+            [
+                "game",
+                "--size",
+                "small",
+                "--difficulty",
+                "easy",
+                "--agent",
+                "greedy",
+                "--rounds",
+                "8",
+                "--output",
+                str(tmp_path / "game.jsonl"),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+
+    assert "defender policy  : contextual" in printed
+    assert "settled on" not in printed, "a contextual defender has no single arm"

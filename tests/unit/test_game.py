@@ -1,7 +1,15 @@
 import pytest
 
 from rlattack.agents import Agent, GreedyAgent, ShortestPathOracle
-from rlattack.defender import DEFAULT_ARMS, BanditDefender, DefenderArm, DefenderConfig
+from rlattack.defender import (
+    DEFAULT_ARMS,
+    DEFENDER_ACTIONS,
+    BanditDefender,
+    ContextualDefender,
+    DefenderArm,
+    DefenderConfig,
+    DefenderContext,
+)
 from rlattack.evaluation import EpisodeOutcome
 from rlattack.experiment import ExperimentConfig
 from rlattack.game import GameResult, defender_reward, play
@@ -112,3 +120,100 @@ def test_the_defender_prefers_an_arm_that_stops_the_attacker() -> None:
 def test_a_game_needs_at_least_one_round() -> None:
     with pytest.raises(ValueError, match="episodes must be positive"):
         play(ExperimentConfig(), greedy_factory, episodes=0)
+
+
+def test_responding_is_not_free() -> None:
+    """Without a response cost, a defender that always responds is trivially optimal."""
+
+    quiet = EpisodeOutcome(
+        seed=0,
+        success=False,
+        detected=True,
+        steps=10,
+        reward=0.0,
+        detection_risk=0.0,
+        path_cost=0.0,
+        defender_actions=1,
+        defender_false_positives=0,
+    )
+    noisy = EpisodeOutcome(
+        seed=0,
+        success=False,
+        detected=True,
+        steps=10,
+        reward=0.0,
+        detection_risk=0.0,
+        path_cost=0.0,
+        defender_actions=20,
+        defender_false_positives=15,
+    )
+
+    assert defender_reward(quiet) > defender_reward(noisy)
+    assert defender_reward(quiet, response_cost=0.0, false_positive_cost=0.0) == 1.0
+    with pytest.raises(ValueError, match="must not be negative"):
+        defender_reward(quiet, response_cost=-1.0)
+
+
+def test_a_false_positive_costs_more_than_a_justified_response() -> None:
+    def scored(actions: int, false_positives: int) -> float:
+        return defender_reward(
+            EpisodeOutcome(
+                seed=0,
+                success=False,
+                detected=False,
+                steps=10,
+                reward=0.0,
+                detection_risk=0.0,
+                path_cost=0.0,
+                defender_actions=actions,
+                defender_false_positives=false_positives,
+            )
+        )
+
+    assert scored(4, 0) > scored(4, 4)
+
+
+def test_the_contextual_defender_learns_a_table_and_is_reproducible() -> None:
+    config = ExperimentConfig(size="small", difficulty="easy", seed=2, step_budget=60)
+
+    first = play(config, greedy_factory, ContextualDefender(), episodes=10, seed=3)
+    second = play(config, greedy_factory, ContextualDefender(), episodes=10, seed=3)
+
+    assert first == second
+    assert first.pulls == {}
+    assert first.preferred_arm == "contextual"
+
+
+def test_the_contextual_defender_is_validated_and_records_visits() -> None:
+    with pytest.raises(ValueError, match="exploration"):
+        ContextualDefender(exploration=2.0)
+    with pytest.raises(ValueError, match="must be enabled"):
+        ContextualDefender(config=DefenderConfig())
+
+    defender = ContextualDefender(exploration=0.0)
+    defender.reset(seed=0)
+    defender.start_episode()
+    context = DefenderContext(alert_band=1, has_credentials=True, phase=0)
+
+    assert defender.action_for(context) in DEFENDER_ACTIONS
+
+    defender.finish_episode(1.0)
+    table = defender.table
+
+    assert len(table) == 1
+    assert next(iter(table.values())) == 1.0
+    assert context.key == (1, True, 0)
+
+
+def test_the_contextual_defender_exploits_what_it_learned() -> None:
+    defender = ContextualDefender(exploration=0.0)
+    defender.reset(seed=0)
+    context = DefenderContext(alert_band=2, has_credentials=True, phase=2)
+    for _ in range(6):
+        defender.start_episode()
+        chosen = defender.action_for(context)
+        defender.finish_episode(1.0 if chosen == "revoke" else 0.0)
+
+    defender.start_episode()
+
+    assert defender.action_for(context) == "revoke"

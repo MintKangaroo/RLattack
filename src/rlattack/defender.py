@@ -8,7 +8,7 @@ foothold again.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -209,3 +209,102 @@ class BanditDefender:
         self._pulls[index] += 1
         count = self._pulls[index]
         self._values[index] += (reward - self._values[index]) / count
+
+
+DEFENDER_ACTIONS: tuple[str, ...] = ("none", "harden", "revoke")
+
+
+@dataclass(frozen=True)
+class DefenderContext:
+    """What the defender can see about the episode so far.
+
+    Deliberately coarse and observable: an alert band rather than the exact risk,
+    whether there is anything to revoke, and how far into the budget the episode is.
+    """
+
+    alert_band: int
+    has_credentials: bool
+    phase: int
+
+    @property
+    def key(self) -> tuple[int, bool, int]:
+        """Return the table key for this context."""
+
+        return (self.alert_band, self.has_credentials, self.phase)
+
+
+@dataclass
+class ContextualDefender:
+    """A defender whose response depends on the episode so far, and which learns it.
+
+    :class:`BanditDefender` commits to one configuration for a whole episode, so it can
+    only learn *which fixed policy* is best. This one chooses per decision point from
+    an observable context and learns a table of context to action, so it can hold fire
+    early and respond once the episode looks dangerous.
+
+    Credit assignment is Monte-Carlo: every (context, action) pair visited in an episode
+    is updated toward that episode's terminal defender reward. With one scalar per
+    episode there is nothing finer to assign.
+    """
+
+    config: DefenderConfig = field(default_factory=DefenderConfig.adaptive)
+    exploration: float = 0.15
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.exploration <= 1.0:
+            raise ValueError("exploration must be in [0, 1]")
+        if not self.config.enabled:
+            raise ValueError("a contextual defender must be enabled")
+        self.reset()
+
+    def reset(self, *, seed: int | None = None) -> None:
+        """Clear the learned table and restart the selection stream."""
+
+        self._rng = np.random.default_rng(seed)
+        self._counts: dict[tuple[tuple[int, bool, int], int], int] = {}
+        self._values: dict[tuple[tuple[int, bool, int], int], float] = {}
+        self._episode: list[tuple[tuple[int, bool, int], int]] = []
+
+    def start_episode(self) -> None:
+        """Forget the previous episode's visited pairs."""
+
+        self._episode = []
+
+    @property
+    def table(self) -> dict[tuple[tuple[int, bool, int], int], float]:
+        """Return the learned value of each (context, action) pair."""
+
+        return dict(self._values)
+
+    def action_for(self, context: DefenderContext) -> str:
+        """Choose a response for this context and record the visit."""
+
+        untried = [
+            candidate
+            for candidate in range(len(DEFENDER_ACTIONS))
+            if (context.key, candidate) not in self._counts
+        ]
+        if untried:
+            # Every action in a context is tried once before any of them is preferred;
+            # otherwise a zero-initialised table with no exploration never moves off the
+            # first action and learns nothing.
+            index = untried[0]
+        elif self._rng.random() < self.exploration:
+            index = int(self._rng.integers(len(DEFENDER_ACTIONS)))
+        else:
+            scored = [
+                self._values.get((context.key, candidate), 0.0)
+                for candidate in range(len(DEFENDER_ACTIONS))
+            ]
+            index = scored.index(max(scored))
+        self._episode.append((context.key, index))
+        return DEFENDER_ACTIONS[index]
+
+    def finish_episode(self, reward: float) -> None:
+        """Fold the episode's terminal reward into every pair it visited."""
+
+        for pair in self._episode:
+            self._counts[pair] = self._counts.get(pair, 0) + 1
+            previous = self._values.get(pair, 0.0)
+            self._values[pair] = previous + (reward - previous) / self._counts[pair]
+        self._episode = []

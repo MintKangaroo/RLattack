@@ -21,8 +21,8 @@ from rlattack.curriculum import (
     stage_env_factory,
 )
 from rlattack.dashboard import run_dashboard
-from rlattack.defender import BanditDefender
-from rlattack.env import AttackPathEnv, ObservationConfig
+from rlattack.defender import BanditDefender, ContextualDefender, DefenderConfig
+from rlattack.env import AttackPathEnv, DynamicsConfig, ObservationConfig
 from rlattack.evaluation import BenchmarkMetrics
 from rlattack.experiment import (
     REWARD_STRATEGIES,
@@ -256,6 +256,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
     )
     game.add_argument("--rounds", type=int, default=200, help="episodes the defender learns over")
+    game.add_argument(
+        "--defender-policy",
+        choices=("bandit", "contextual"),
+        default="contextual",
+        help="one configuration per episode, or a policy conditioned on the episode so far",
+    )
     game.add_argument("--exploration", type=float, default=0.15)
     game.add_argument("--output", type=Path, default=Path("artifacts/game.jsonl"))
 
@@ -290,6 +296,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("scenario", "curriculum"),
         default="curriculum",
         help="fixed capacities let one policy transfer across scenario sizes",
+    )
+    train.add_argument(
+        "--discovery",
+        choices=("exact", "noisy"),
+        default="exact",
+        help="train under exact adjacency, or under the noisy scan model",
+    )
+    train.add_argument(
+        "--defender",
+        choices=("passive", "adaptive"),
+        default="passive",
+        help="train against a passive or an adaptive defender",
     )
     train.add_argument("--output-dir", type=Path, default=Path("artifacts/policies"))
     train.add_argument(
@@ -423,14 +441,25 @@ def _transfer_view_model(
 
 
 def _stage_env_builder(
-    stage: CurriculumStage, step_budget: int, observation_config: ObservationConfig
+    stage: CurriculumStage,
+    step_budget: int,
+    observation_config: ObservationConfig,
+    dynamics: DynamicsConfig | None = None,
+    defender: DefenderConfig | None = None,
 ) -> Callable[[], StageEnv]:
-    """Return a zero-argument environment builder for one curriculum stage."""
+    """Return a zero-argument environment builder for one curriculum stage.
+
+    Training conditions must be passed through here: a policy trained under the default
+    dynamics has no reason to handle any other condition, which is exactly how the v0.6
+    policies ended up scoring 0% under noisy discovery.
+    """
 
     factory = stage_env_factory(
         stage,
         step_budget=step_budget,
         observation_config=observation_config,
+        dynamics=dynamics,
+        defender=defender,
     )
 
     def build() -> StageEnv:
@@ -548,13 +577,12 @@ def _run_game(args: argparse.Namespace) -> int:
 
     config = _config_from_args(args)
     agent_factory, label = _agent_factory_from_args(args, config)
-    result = play(
-        config,
-        agent_factory,
-        BanditDefender(exploration=args.exploration),
-        episodes=args.rounds,
-        seed=config.seed,
+    opponent: BanditDefender | ContextualDefender = (
+        ContextualDefender(exploration=args.exploration)
+        if args.defender_policy == "contextual"
+        else BanditDefender(exploration=args.exploration)
     )
+    result = play(config, agent_factory, opponent, episodes=args.rounds, seed=config.seed)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         "".join(
@@ -569,9 +597,11 @@ def _run_game(args: argparse.Namespace) -> int:
     print(f"  attacker success : {result.attacker_success_rate:5.1%}")
     print(f"  detected         : {result.detection_rate:5.1%}")
     print(f"  defender reward  : {result.mean_defender_reward:.3f}")
-    print(f"  settled on       : {result.preferred_arm}")
-    for arm, pulls in result.pulls.items():
-        print(f"  {arm:<16} pulls={pulls:4}  value={result.values[arm]:.3f}")
+    print(f"  defender policy  : {args.defender_policy}")
+    if result.pulls:
+        print(f"  settled on       : {result.preferred_arm}")
+        for arm, pulls in result.pulls.items():
+            print(f"  {arm:<16} pulls={pulls:4}  value={result.values[arm]:.3f}")
     print(f"  export    : {args.output.resolve()}")
     return 0
 
@@ -652,7 +682,10 @@ def _run_training(args: argparse.Namespace) -> int:
             algorithm=args.algorithm,
         )
         labels = ", ".join(stage.label for stage in stages)
-        print(f"Trained {args.algorithm} curriculum ({labels}) into {args.output_dir.resolve()}")
+        print(
+            f"Trained {args.algorithm} curriculum ({labels}) under "
+            f"{args.defender}/{args.discovery} into {args.output_dir.resolve()}"
+        )
         return 0
     if args.algorithm == "maskable-ppo":
         print("Masked training requires --curriculum; rerun with --curriculum")
