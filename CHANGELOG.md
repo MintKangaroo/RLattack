@@ -21,9 +21,22 @@ All notable changes to RLAttack are recorded here. The project follows
   recommended setting.
 - Two specializing defender arms (`harden-only`, `revoke-only`) and a broad attacker
   (`shortest-path-broad`) that takes the whole network rather than only its route.
+- **`scripts/ramguard.sh`** runs a long training job inside a transient cgroup with a
+  hard memory cap and a pre-flight free-memory check, so a runaway run is killed on
+  its own instead of pushing a shared machine into swap.
 
 ### Reported
 
+- **Training against a learning defender did not transfer better.** Two MaskablePPO
+  policies differing only in `--adversarial`, evaluated on the same condition grid with
+  32 seeds paired: no condition favours the adversarially trained one significantly, and
+  both exact conditions trend against it (passive/exact -2.50 reward, p = 0.069; 84.4%
+  success against 96.9%). Its apparent edge under noisy discovery is 2 episodes out of
+  32 against 0 (p = 0.71) bought at a 15.6% detection rate against 0%. The reason shows
+  inside each policy's own grid: adaptive against passive is insignificant for both
+  (p = 0.515 and p = 0.228), so the defender axis is nearly inert and adversarial
+  training hardens against pressure that is not there. Same root cause as the missing
+  mixed equilibrium below; both wait on targeted defender attention.
 - **Enriching the policy grid did not produce a mixed equilibrium.** It stays pure -
   shortest-path against `fast`, value 0.79 - because redundancy is not a trade-off here
   but strictly worse: against `revoke-only` the broad oracle scores 43.8% where the

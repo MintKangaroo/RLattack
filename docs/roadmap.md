@@ -106,7 +106,11 @@
     unprofitable. Next: price discovery against the probe success rate, or train long
     enough for the value function to carry the pivot reward back to the probe.)
 52. Report whether a policy trained against a learning defender transfers better than
-    one trained against a fixed condition.
+    one trained against a fixed condition. (**answered negatively**: no condition on the
+    grid favours the adversarially trained policy significantly, and the two exact
+    conditions trend against it. The defender axis is nearly inert - adaptive vs passive
+    is insignificant *within* each policy - so adversarial training builds robustness to
+    pressure that is not there. Same root cause as item 53; see item 55)
 53. Enrich the policy grid until the equilibrium is mixed. (**answered negatively**:
     enriching it did not produce mixing, and the reason is that detection risk is a
     single scalar penalizing all activity uniformly, so no attacker strategy trades off
@@ -119,7 +123,9 @@
 
 55. Give the defender targeted attention - per-host monitoring an attacker can route
     around - so that evading one defender exposes you to another. Without it the policy
-    grid cannot have a mixed equilibrium, because doing less is always better.
+    grid cannot have a mixed equilibrium, because doing less is always better, and
+    adversarial training has no pressure to learn against (items 52 and 53 both stall
+    here). This is the highest-value item on the list.
 56. Report the family results for trained policies, not only baselines, and check
     whether curriculum training on chains transfers to star, tree, mesh, and ring.
 57. Vary host count within a family, so structure and scale are separable rather than

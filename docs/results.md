@@ -273,6 +273,44 @@ baseline, not an achievement of it.
 This is the sharpest limitation in this document: **the published policies are only
 valid under the conditions they trained on.**
 
+## Training against a learning defender did not help
+
+Roadmap item 52 asked whether a policy trained against a defender that learns
+alongside it transfers better than one trained against a fixed condition. Two
+MaskablePPO policies, identical except for that one flag:
+
+- `mppo-adv` — 400k steps, staged curriculum, `--adversarial` (a `ContextualDefender`
+  learns during training), exact discovery.
+- `mppo-control` — the same 400k staged curriculum against the passive defender.
+
+Both were then evaluated on the same condition grid: `medium/hard`, 32 shared seeds,
+`--step-budget 102`, curriculum observations. Rewards are paired by seed; positive
+`diff` favours the adversarially trained policy.
+
+| Condition | adv reward | control reward | diff | 95% CI | p | success adv / control |
+| --- | --- | --- | --- | --- | --- | --- |
+| passive / exact | 24.32 | 26.82 | −2.50 | [−5.26, −0.21] | 0.069 | 84.4% / 96.9% |
+| adaptive / exact | 24.20 | 26.07 | −1.87 | [−4.77, +0.66] | 0.188 | 84.4% / 93.8% |
+| passive / noisy | −11.39 | −11.90 | +0.50 | [−2.02, +3.03] | 0.709 | 6.2% / 0.0% |
+| adaptive / noisy | −11.61 | −11.90 | +0.28 | [−2.22, +2.78] | 0.831 | 6.2% / 0.0% |
+
+**The answer is no.** No condition favours adversarial training significantly. The two
+exact conditions trend *against* it, and the apparent edge under noisy discovery is
+2 episodes out of 32 versus 0 — well inside noise (p ≈ 0.71) — bought at a 15.6%
+detection rate where the control policy is detected 0% of the time.
+
+The reason is visible inside each policy's own grid: the defender axis is nearly inert.
+Comparing `adaptive/exact` against `passive/exact` *within* a policy is insignificant
+for both (adv p = 0.515, control p = 0.228). Training against a learning defender cannot
+build robustness to pressure that is not there, so the only thing the adversarial run
+bought was a training distribution slightly further from the evaluation one.
+
+This is the same root cause as item 53's missing mixed equilibrium: detection risk is a
+single scalar that penalizes all activity uniformly, so the defender has no lever that
+some attacker strategies feel more than others. Item 55 — targeted per-host defender
+attention — is the prerequisite for both, and neither question is worth re-running
+before it lands.
+
 ## Reproducing
 
 ```bash

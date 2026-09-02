@@ -71,12 +71,28 @@ rlattack train --algorithm maskable-ppo --curriculum \
 rlattack dashboard
 ```
 
+### 장시간 training은 램가드 아래에서 실행합니다
+
+이 머신은 다른 프로젝트와 메모리를 공유합니다. 상한 없이 돌리면 실패하는 대신
+스왑으로 밀려 머신 전체가 느려지므로, training은 transient cgroup으로 감쌉니다.
+
+```bash
+scripts/ramguard.sh -m 2G -- rlattack train --algorithm maskable-ppo \
+  --curriculum --curriculum-timesteps 400000 --output-dir artifacts/policies/<name>
+```
+
+`-m`은 잡의 상한(초과 시 커널이 **해당 잡만** 종료, rc=137), `-r`은 시작 전
+필요한 시스템 여유 메모리입니다(부족하면 시작 자체를 거부, rc=1). 기본값은
+`RLATTACK_MEM_MAX=2G`, `RLATTACK_MEM_FREE=1G`이며 환경변수로 바꿀 수 있습니다.
+curriculum training 1회의 실측 RSS는 약 400–600MiB라 2G면 충분합니다.
+
 Dashboard: <http://127.0.0.1:8000>
 
 ## 다음 확장 후보 (v1.0)
 
 `docs/roadmap.md`의 55–57번입니다. 우선순위는 **55번(표적화된 defender 주의)** —
-이것 없이는 정책 격자가 혼합 균형을 가질 수 없습니다.
+이것 없이는 정책 격자가 혼합 균형을 가질 수 없고(53번), adversarial 학습도 상대할
+압력이 없어 이득이 없습니다(52번). 두 부정 결과가 모두 여기서 막혀 있습니다.
 
 ## 구현 메모
 
@@ -112,6 +128,7 @@ Dashboard: <http://127.0.0.1:8000>
 - `main` 또는 `develop`에 직접 push하지 않습니다.
 - 기능 변경은 `feat/*`, 수정은 `fix/*`, 문서는 `docs/*`에서 시작합니다.
 - 장기 training은 CI의 `quality` job에서 실행하지 않습니다.
+- 로컬 장기 training은 `scripts/ramguard.sh`로 메모리 상한을 걸고 실행합니다.
 - Scanner, exploit framework, shell, 실제 credential, public target 연결을 추가하지 않습니다.
 - Dashboard input에 target address, command, payload, 임의 file path를 추가하지 않습니다.
 - UI metric은 별도 mock data가 아니라 반드시 `rlattack.experiment` 결과를 사용합니다.
