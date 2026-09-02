@@ -1057,3 +1057,93 @@ def test_cli_equilibrium_solves_a_held_out_family_grid(
     assert "mesh/6 hosts" in printed
     assert "threshold 0.4" in printed
     assert len(solved["payoffs"]) == 6
+
+
+def test_cli_training_carries_the_targeted_defender_conditions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The v1.0 conditions must reach the environment too, not only the older ones.
+
+    `--defender targeted` silently degraded to a passive defender and
+    `--detection-threshold` never left the parser, which is the same failure the test
+    above was written for; both are asserted on the built environment.
+    """
+
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    built: list[StageEnv] = []
+
+    def record(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        built.extend(cast(Callable[[], StageEnv], builder)() for builder in builders)
+
+    monkeypatch.setattr(cli, "train_curriculum", record)
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--defender",
+                "targeted",
+                "--detection-threshold",
+                "0.4",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "targeted"),
+            ]
+        )
+        == 0
+    )
+
+    assert built
+    for stage_env in built:
+        env = stage_env.current
+        assert env.defender.targeted_attention, "targeted defender must reach the env"
+        assert env.dynamics.detection_threshold == 0.4
+        assert env.observation_config.expose_monitoring, (
+            "a policy trained against a targeted defender must be able to see it"
+        )
+
+    assert "monitored_hosts" in built[0].reset(seed=0)[0]
+    assert "targeted/exact/threshold 0.4" in capsys.readouterr().out
+
+
+def test_cli_conditions_sweeps_a_family_on_the_attention_grid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "mesh-conditions.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "conditions",
+                "--agent",
+                "greedy",
+                "--family",
+                "mesh",
+                "--family-hosts",
+                "5",
+                "--attention-grid",
+                "--detection-threshold",
+                "0.4",
+                "--episodes",
+                "2",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert "mesh/5 hosts" in printed
+    assert "threshold 0.4" in printed
+    assert {row["agent"] for row in rows} == {
+        "passive/exact",
+        "adaptive/exact",
+        "targeted/exact",
+        "targeted/noisy",
+    }

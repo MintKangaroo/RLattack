@@ -11,12 +11,18 @@ from typing import cast
 
 from rlattack import __version__
 from rlattack.agents import Agent
-from rlattack.conditions import CONTROL_LABEL, run_condition_sweep
+from rlattack.conditions import (
+    ATTENTION_GRID,
+    CONDITION_GRID,
+    CONTROL_LABEL,
+    run_condition_sweep,
+)
 from rlattack.curriculum import (
     DEFAULT_CURRICULUM,
     CurriculumStage,
     StageEnv,
     evaluate_transfer,
+    family_curriculum,
     scale_curriculum,
     stage_env_factory,
 )
@@ -282,6 +288,21 @@ def build_parser() -> argparse.ArgumentParser:
     conditions.add_argument(
         "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
     )
+    conditions.add_argument(
+        "--family",
+        choices=tuple(FAMILIES),
+        default=None,
+        help="sweep on a topology family instead of the generator",
+    )
+    conditions.add_argument("--family-hosts", type=int, default=8, help="host count for --family")
+    conditions.add_argument(
+        "--attention-grid",
+        action="store_true",
+        help=(
+            "use the targeted-attention grid (passive, adaptive, targeted, "
+            "targeted+noisy) instead of the published defender x discovery grid"
+        ),
+    )
     conditions.add_argument("--output", type=Path, default=Path("artifacts/conditions.jsonl"))
     conditions.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
     _add_significance_arguments(conditions, default_reference=CONTROL_LABEL)
@@ -398,6 +419,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="train against a passive, an adaptive, or a targeted defender",
     )
     train.add_argument(
+        "--detection-threshold",
+        type=float,
+        default=0.9,
+        help=(
+            "accumulated risk that ends a training episode; at the 0.9 default "
+            "detection rarely fires, so a policy has little reason to learn to evade"
+        ),
+    )
+    train.add_argument(
         "--reward",
         choices=("sparse", "shaped", "risk-aware", "cost-aware", "pivot-focused"),
         default="risk-aware",
@@ -407,6 +437,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--adversarial",
         action="store_true",
         help="let a contextual defender learn alongside the attacker during training",
+    )
+    train.add_argument(
+        "--family",
+        choices=tuple(FAMILIES),
+        default=None,
+        help=(
+            "train the curriculum on a topology family instead of the generator's "
+            "single chain shape, growing the host count across stages"
+        ),
     )
     train.add_argument(
         "--forget-previous-stages",
@@ -647,11 +686,25 @@ def _run_conditions(args: argparse.Namespace) -> int:
 
     config = _config_from_args(args)
     agent_factory, label = _agent_factory_from_args(args, config)
-    metrics = run_condition_sweep(config, agent_factory)
+    builder = None
+    if args.family is not None:
+        hosts = args.family_hosts
+
+        def builder(seed: int) -> Scenario:
+            return build_family_scenario(cast(str, args.family), hosts, seed)
+
+    grid = ATTENTION_GRID if args.attention_grid else CONDITION_GRID
+    metrics = run_condition_sweep(config, agent_factory, grid, builder)
     output = write_results(metrics, args.output, args.format)
+    scenarios = (
+        f"{args.family}/{args.family_hosts} hosts"
+        if args.family is not None
+        else f"{config.size}/{config.difficulty}"
+    )
     print("RLAttack condition sweep")
     print(f"  policy    : {label}")
-    print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
+    print(f"  scenarios : {scenarios} x {config.benchmark_episodes} seeds")
+    print(f"  detection : threshold {config.detection_threshold}")
     for name, metric in metrics.items():
         print(
             f"  {name:<17} success={metric.success_rate:5.1%} "
@@ -879,11 +932,22 @@ def _run_training(args: argparse.Namespace) -> int:
         args.seed,
     )
 
-    observation_config = (
-        ObservationConfig.for_curriculum()
-        if args.observation == "curriculum"
-        else ObservationConfig()
+    # Every training condition is derived from one ExperimentConfig rather than
+    # rebuilt here. A flag that is printed in the banner but never reaches the
+    # environment cost a whole 400k run in v0.7, and rebuilding the conditions in two
+    # places is exactly how that happens.
+    conditions = ExperimentConfig(
+        size=cast(ScenarioSize, args.size),
+        difficulty=cast(Difficulty, args.difficulty),
+        seed=args.seed,
+        reward_strategy=cast(RewardStrategy, args.reward),
+        step_budget=args.step_budget,
+        observation=cast(ObservationMode, args.observation),
+        defender=cast(DefenderMode, args.defender),
+        discovery=cast(DiscoveryMode, args.discovery),
+        detection_threshold=args.detection_threshold,
     )
+    observation_config = conditions.observation_config()
 
     def env_factory() -> AttackPathEnv:
         return AttackPathEnv(
@@ -893,14 +957,13 @@ def _run_training(args: argparse.Namespace) -> int:
         )
 
     if args.curriculum:
+        base = family_curriculum(args.family) if args.family is not None else DEFAULT_CURRICULUM
         stages = (
-            scale_curriculum(DEFAULT_CURRICULUM, args.curriculum_timesteps)
-            if args.curriculum_timesteps
-            else DEFAULT_CURRICULUM
+            scale_curriculum(base, args.curriculum_timesteps) if args.curriculum_timesteps else base
         )
-        dynamics = DynamicsConfig(noisy_discovery=args.discovery == "noisy")
+        dynamics = conditions.dynamics()
         opponent = ContextualDefender() if args.adversarial else None
-        defender = DefenderConfig.adaptive() if args.defender == "adaptive" else DefenderConfig()
+        defender = conditions.defender_config()
         train_curriculum(
             [
                 _stage_env_builder(
@@ -922,7 +985,8 @@ def _run_training(args: argparse.Namespace) -> int:
         labels = ", ".join(stage.label for stage in stages)
         print(
             f"Trained {args.algorithm} curriculum ({labels}) under "
-            f"{'adversarial' if args.adversarial else args.defender}/{args.discovery} "
+            f"{'adversarial' if args.adversarial else args.defender}/{args.discovery}"
+            f"/threshold {conditions.detection_threshold} "
             f"into {args.output_dir.resolve()}"
         )
         return 0

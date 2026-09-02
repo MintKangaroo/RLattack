@@ -2,12 +2,14 @@ import pytest
 
 from rlattack.agents import Agent, GreedyAgent
 from rlattack.conditions import (
+    ATTENTION_GRID,
     CONDITION_GRID,
     CONTROL_LABEL,
     Condition,
     run_condition_sweep,
 )
 from rlattack.experiment import ExperimentConfig
+from rlattack.families import build_scenario
 
 
 def greedy_factory(seed: int) -> Agent:
@@ -72,3 +74,33 @@ def test_the_treatments_actually_change_the_episodes() -> None:
 def test_an_empty_condition_list_is_rejected() -> None:
     with pytest.raises(ValueError, match="at least one condition"):
         run_condition_sweep(ExperimentConfig(), greedy_factory, ())
+
+
+def test_applying_a_condition_keeps_the_untreated_settings() -> None:
+    """A condition changes two axes; rebuilding the config drops everything else."""
+
+    base = ExperimentConfig(
+        defender="passive", discovery="exact", detection_threshold=0.4, step_budget=17
+    )
+    applied = Condition("targeted", "noisy").apply(base)
+
+    assert (applied.defender, applied.discovery) == ("targeted", "noisy")
+    assert applied.detection_threshold == 0.4
+    assert applied.step_budget == 17
+
+
+def test_the_attention_grid_exposes_monitoring_to_every_cell() -> None:
+    """One observation space for the sweep, or a single policy cannot fit every cell."""
+
+    def agent_factory(seed: int) -> Agent:
+        return GreedyAgent()
+
+    metrics = run_condition_sweep(
+        ExperimentConfig(benchmark_episodes=2, detection_threshold=0.4),
+        agent_factory,
+        ATTENTION_GRID,
+        scenario_builder=lambda seed: build_scenario("mesh", 5, seed),
+    )
+
+    assert set(metrics) == {arm.label for arm in ATTENTION_GRID}
+    assert "targeted/exact" in metrics

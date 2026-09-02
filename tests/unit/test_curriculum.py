@@ -12,11 +12,13 @@ from rlattack.curriculum import (
     CurriculumStage,
     StageEnv,
     evaluate_transfer,
+    family_curriculum,
     scale_curriculum,
     stage_env_factory,
 )
 from rlattack.defender import ContextualDefender
 from rlattack.env import DynamicsConfig, ObservationConfig
+from rlattack.families import build_scenario
 from rlattack.generator import generate_scenario
 
 
@@ -201,3 +203,45 @@ def test_a_stage_without_a_defender_policy_is_untouched() -> None:
     _, _, _, _, info = env.step(action)
 
     assert info["defender_action"] == "none"
+
+
+def test_a_family_stage_describes_its_topology_and_scale() -> None:
+    stage = CurriculumStage("medium", "hard", family="mesh", hosts=10)
+
+    assert stage.label == "mesh/10"
+    # A family stage has no size to scale on, so it scales on its host count.
+    assert stage.step_budget(60) == 100
+    assert CurriculumStage("medium", "hard").label == "medium/hard"
+
+
+def test_a_family_stage_is_validated() -> None:
+    with pytest.raises(ValueError, match="unknown topology family"):
+        CurriculumStage("medium", "hard", family="hypercube")
+    with pytest.raises(ValueError, match="hosts"):
+        CurriculumStage("medium", "hard", family="mesh", hosts=1)
+
+
+def test_a_family_curriculum_grows_the_host_count() -> None:
+    stages = family_curriculum("mesh")
+
+    assert [stage.label for stage in stages] == ["mesh/5", "mesh/6", "mesh/8", "mesh/10"]
+
+    with pytest.raises(ValueError, match="at least one host count"):
+        family_curriculum("mesh", ())
+
+
+def test_rescaling_keeps_a_family_curriculum_on_its_family() -> None:
+    """Rebuilding a stage from a subset of its fields silently reverts the topology."""
+
+    rescaled = scale_curriculum(family_curriculum("mesh"), 1_000)
+
+    assert [stage.label for stage in rescaled] == ["mesh/5", "mesh/6", "mesh/8", "mesh/10"]
+    assert sum(stage.timesteps for stage in rescaled) == 1_000
+
+
+def test_a_family_stage_builds_its_own_topology() -> None:
+    stage = CurriculumStage("medium", "hard", family="mesh", hosts=8)
+    env = stage_env_factory(stage)(3)
+
+    assert len(env.scenario.hosts) == 8
+    assert env.scenario.id == build_scenario("mesh", 8, 3).id
