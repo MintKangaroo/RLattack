@@ -1,14 +1,14 @@
 # RLAttack 인수인계
 
-> 다음 세션 시작점: 2026-08-30 기준 v0.9.0 작업본
+> 다음 세션 시작점: 2026-09-02 기준 v1.0.0 작업본
 
 ## 현재 상태
 
-- Package version: `0.9.0`
-- 작업 브랜치: `feat/v090-exploration` (PR #8–#13 머지 완료, main이 v0.8.0)
+- Package version: `1.0.0`
+- 작업 브랜치: `feat/v100-targeted-attention` (main이 v0.9.0)
 - 원격 저장소: <https://github.com/MintKangaroo/RLattack>
 - 실행 경계: synthetic graph와 in-process state transition만 허용
-- 품질 기준: Ruff, strict mypy, 264 tests, package coverage 100%
+- 품질 기준: Ruff, strict mypy, 284 tests, package coverage 100%
 
 ## 이전 릴리스 요약 (PR #8–#13, 모두 머지됨)
 
@@ -18,6 +18,42 @@
 - **v0.6** 조건 격자 평가, 학습하는 defender, sweep, 400k 정책
 - **v0.7** 두 학습자 게임, 외부 graph import, noisy 학습의 음성 결과
 - **v0.8** probe memory(0% → 6.2%), 균형 분석, 대응 예산, adversarial 학습
+
+## v1.0에서 바뀐 것 — 로드맵 55번 완료, 52·53번의 원인 규명
+
+1. **표적화된 defender 주의 (55)** — 탐지 risk가 이제 **행동이 일어난 호스트에 귀속**됩니다.
+   `attention_hosts`를 켜면 defender가 소수 호스트를 집중 감시하고 나머지에는 그만큼
+   눈이 멉니다. **blind 배수는 focus에서 유도되어 호스트 평균이 정확히 1로 보존됩니다.**
+   보존이 핵심입니다 — 보존하지 않으면 "더 많이 감시하는 defender"는 그냥 "더 강한
+   defender"라서, 격자가 감시의 *배치*가 아니라 *총량*을 측정하게 됩니다.
+   표적 defender에게 `harden`은 감시자를 공격자가 이미 점유한 지반으로 **재조준**하는
+   행위로 해석됩니다.
+2. **혼합 균형이 처음으로 나왔습니다** — `mesh` + 구속되는 탐지 임계값에서
+   공격자 `shortest-path` 82% / `shortest-path-evasive` 18%,
+   defender `attention-narrow` 54% / `attention-broad` 46%, value 0.811 (64 seeds).
+   **defender 지지집합이 attention arm 2개뿐이고 균일 arm 7개는 전부 가중치 0**입니다.
+   혼합이 arm을 늘려서가 아니라 표적 주의에서 나왔다는 직접 증거입니다.
+   회피 이득: narrow 상대 **+14.1pp** (95% CI [+7.8, +21.1], p=0.0001, 128 paired seeds),
+   broad 상대 −3.1pp (p=0.395). 균일 defender 상대로는 **모든 seed에서 정확히 0** (대조군).
+3. **두 조건이 *모두* 필요하고, 하나만으로는 순수 균형으로 남습니다.**
+   - **경로 다양성**: `mesh`만 node-disjoint 경로가 평균 2.12개고 유일하게 혼합됩니다.
+     chain/star/tree/ring은 ~1.00이고 전부 순수입니다. 경로가 하나면 우회할 곳이
+     없으므로 주의를 어떻게 배치해도 회피가 불가능합니다.
+   - **구속되는 탐지 임계값**: 기본값 0.9에서는 oracle이 32 episode 중 2회만 탐지됩니다.
+     탐지가 결과를 결정하지 않으므로 risk를 재가격해도 아무것도 안 바뀝니다.
+     창은 좁습니다 — 0.25로 내리면 다시 순수로 붕괴합니다(회피가 양쪽 모두에 이득이 됨).
+   ⚠️ **v0.9의 두 음성 결과(52, 53)는 정책이 빈약해서가 아니라 구조 때문이었습니다.**
+4. **`--detection-threshold`가 일급 실험 조건이 되었습니다.** 기본값은 0.9 그대로라
+   기존에 발표한 수치는 전부 유효합니다.
+5. `rlattack families`가 **`routes=`**(진입점→최심 호스트의 node-disjoint 경로 수)를
+   보고합니다. 혼합 여부를 결정하는 구조 변수입니다.
+
+### v1.0의 한계 (반드시 함께 인용할 것)
+
+- `shortest-path-evasive`는 monitoring 채널을 읽는 **손으로 쓴 oracle**이지 학습된
+  정책이 아닙니다. 전략이 이득이라는 것만 보이고, 학습자가 그걸 찾아낸다는 건 아닙니다.
+- monitoring 채널은 발견한 호스트의 감시 여부를 **정확히** 알려줍니다. 실제 공격자의
+  fingerprinting은 이보다 노이즈가 크므로 회피 수치는 **낙관적 상한**입니다.
 
 ## v0.9에서 바뀐 것
 
@@ -64,6 +100,9 @@ rlattack conditions --episodes 32 --policy artifacts/policies/<name>/final.zip
 rlattack families --agent shortest-path --discovery noisy --episodes 16
 rlattack transfer --episodes 32 --report artifacts/transfer.html
 rlattack equilibrium --episodes 16
+rlattack equilibrium --family mesh --family-hosts 8 \
+  --detection-threshold 0.4 --episodes 64   # 혼합 균형이 나오는 조건
+rlattack benchmark --defender targeted --episodes 32
 rlattack game --attacker bandit --rounds 200
 rlattack import --input topology.graphml --output artifacts/imported.json
 rlattack train --algorithm maskable-ppo --curriculum \
@@ -88,11 +127,13 @@ curriculum training 1회의 실측 RSS는 약 400–600MiB라 2G면 충분합니
 
 Dashboard: <http://127.0.0.1:8000>
 
-## 다음 확장 후보 (v1.0)
+## 다음 확장 후보 (v1.1)
 
-`docs/roadmap.md`의 55–57번입니다. 우선순위는 **55번(표적화된 defender 주의)** —
-이것 없이는 정책 격자가 혼합 균형을 가질 수 없고(53번), adversarial 학습도 상대할
-압력이 없어 이득이 없습니다(52번). 두 부정 결과가 모두 여기서 막혀 있습니다.
+`docs/roadmap.md`의 56–60번입니다. 우선순위는 **58번** — 52번(adversarial 학습)을
+55번이 찾아낸 조건(mesh + 구속되는 임계값)에서 다시 돌리는 것입니다. 52번의 음성 결과는
+"defender 축이 무기력하다"로 설명됐는데, 그 축은 이제 무기력하지 않습니다(attention arm
+2개가 혼합 균형의 defender 지지집합 전부입니다). 그 다음이 **59번**(oracle이 아니라
+학습된 정책이 우회를 찾아내는지)입니다.
 
 ## 구현 메모
 
@@ -111,6 +152,18 @@ Dashboard: <http://127.0.0.1:8000>
 - `StageEnv`는 reset마다 stage에서 새 scenario를 뽑습니다. SB3가 environment를 한 번만
   만들기 때문에, 그러지 않으면 stage가 class가 아니라 graph 하나를 가르칩니다.
 - 관측 공간이 v0.8에서 바뀌었습니다. v0.7 이전 체크포인트는 로드되지 않습니다.
+- `expose_monitoring`은 기본 **꺼짐**입니다. 켜면 관측 공간이 넓어져 끄고 학습한
+  체크포인트를 못 읽습니다. `--defender targeted`일 때만 자동으로 켜집니다.
+- **주의(attention) 배분은 반드시 보존되어야 합니다.** `attention_split`이 focus에서
+  blind를 유도해 호스트 평균을 1로 맞춥니다. blind를 자유 파라미터로 두면 arm 간
+  비교가 배치가 아니라 총량 비교가 되어 교란됩니다 — 실제로 첫 시도에서 이 버그로
+  broad arm의 평균 배수가 1.4가 되어 결과가 오염됐습니다.
+- `ShortestPathOracle`은 구간 경로에만 monitoring 가중치를 씁니다. **objective 방문
+  순서는 무가중 깊이로 정합니다.** 가중 거리로 순서를 정하면 방향 그래프에서 깊은
+  objective가 먼저 오고 얕은 쪽으로 돌아갈 경로가 없어 `NetworkXNoPath`가 납니다.
+- 탐지 기본 임계값 0.9에서는 탐지가 사실상 발동하지 않습니다(oracle 2/32).
+  risk·defender 관련 실험을 새로 설계할 때는 **먼저 탐지가 구속하는지 측정하세요.**
+  구속하지 않으면 어떤 정교한 defender 기제도 결과를 못 바꿉니다.
 - 공개 정책은 **학습한 조건에서만 유효합니다**. `docs/results.md`의 조건 격자 표를
   보지 않고 성능을 인용하지 마세요.
 - **학습 조건 플래그를 추가하면 반드시 환경까지 도달하는지 테스트하세요.** v0.7에서

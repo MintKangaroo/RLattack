@@ -21,6 +21,7 @@ ATTACKER_ARMS: tuple[AgentName, ...] = (
     "rule-based",
     "shortest-path",
     "shortest-path-broad",
+    "shortest-path-evasive",
 )
 
 

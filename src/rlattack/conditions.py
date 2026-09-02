@@ -26,8 +26,8 @@ class Condition:
     discovery: DiscoveryMode = "exact"
 
     def __post_init__(self) -> None:
-        if self.defender not in ("passive", "adaptive"):
-            raise ValueError("defender must be passive or adaptive")
+        if self.defender not in ("passive", "adaptive", "targeted"):
+            raise ValueError("defender must be passive, adaptive, or targeted")
         if self.discovery not in ("exact", "noisy"):
             raise ValueError("discovery must be exact or noisy")
 

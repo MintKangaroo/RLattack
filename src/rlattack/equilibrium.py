@@ -15,7 +15,7 @@ game rather than of the full cost-adjusted one.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, cast
 
 import numpy as np
@@ -28,6 +28,7 @@ from rlattack.experiment import AgentName, ExperimentConfig, benchmark_seeds, cr
 from rlattack.game import ATTACKER_ARMS, attacker_reward
 from rlattack.generator import generate_scenario
 from rlattack.reward import build_reward_config
+from rlattack.scenario import Scenario
 
 FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 
@@ -122,23 +123,34 @@ def build_payoffs(
     config: ExperimentConfig,
     attacker_arms: Sequence[AgentName] = ATTACKER_ARMS,
     defender_arms: Sequence[DefenderArm] = DEFAULT_ARMS,
+    scenario_builder: Callable[[int], Scenario] | None = None,
 ) -> FloatArray:
     """Evaluate every attacker x defender pair on the same seeds.
 
     The entry is the attacker's mean episode reward, so the row player maximizes.
+
+    ``scenario_builder`` replaces the generator, so the grid can be solved on a
+    held-out topology family. Structure decides whether the grid has anything to
+    trade off: routing around a defender needs somewhere else to route, and only the
+    mesh family offers more than one node-disjoint route to the objective.
     """
 
     if not attacker_arms or not defender_arms:
         raise ValueError("both sides need at least one policy")
+    build = scenario_builder or (
+        lambda seed: generate_scenario(config.size, config.difficulty, seed)
+    )
     seeds = benchmark_seeds(config)
     reward_config = build_reward_config(config.reward_strategy)
-    observation_config = config.observation_config()
+    # Every cell of the grid uses the same observation space, including the monitoring
+    # channel, so that the attacker arms are compared on one interface. The channel is
+    # all zeros against a defender that watches uniformly, so exposing it everywhere
+    # costs the columns that do not use it nothing.
+    observation_config = replace(config.observation_config(), expose_monitoring=True)
     dynamics = config.dynamics()
 
     def agent_for(name: AgentName, seed: int) -> Agent:
-        return create_agent(
-            name, generate_scenario(config.size, config.difficulty, seed), seed=seed
-        )
+        return create_agent(name, build(seed), seed=seed)
 
     matrix: FloatArray = np.zeros((len(attacker_arms), len(defender_arms)))
     for row, attacker in enumerate(attacker_arms):
@@ -146,7 +158,7 @@ def build_payoffs(
             rewards = []
             for seed in seeds:
                 env = AttackPathEnv(
-                    generate_scenario(config.size, config.difficulty, seed),
+                    build(seed),
                     step_budget=config.step_budget,
                     reward_config=reward_config,
                     dynamics=dynamics,
@@ -167,10 +179,11 @@ def solve_grid(
     *,
     iterations: int = 20_000,
     payoff_builder: Callable[..., FloatArray] = build_payoffs,
+    scenario_builder: Callable[[int], Scenario] | None = None,
 ) -> Equilibrium:
     """Build the payoff grid and solve it, keeping the policy labels attached."""
 
-    matrix = payoff_builder(config, attacker_arms, defender_arms)
+    matrix = payoff_builder(config, attacker_arms, defender_arms, scenario_builder)
     solved = solve_zero_sum(matrix, iterations=iterations)
     return Equilibrium(
         attacker_labels=tuple(str(name) for name in attacker_arms),

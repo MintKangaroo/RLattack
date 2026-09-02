@@ -3,6 +3,67 @@
 All notable changes to RLAttack are recorded here. The project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-09-02
+
+### Added
+
+- **Targeted defender attention.** `DefenderConfig.attention_hosts` concentrates
+  monitoring on a few hosts instead of spreading it uniformly, and detection risk is now
+  attributed to the host an action lands on. The blind multiplier is *derived* from the
+  focus so the mean over hosts is exactly 1, which keeps the arms differing in the shape
+  of the monitoring budget rather than its total - without conservation, a defender
+  watching more hosts is just a stronger defender. For a targeted defender, hardening
+  re-aims the watchers onto the ground the attacker already holds rather than raising
+  sensitivity everywhere.
+- **`shortest-path-evasive` attacker** and the `monitored_hosts` observation channel
+  (`ObservationConfig.expose_monitoring`), which reports watched hosts among those the
+  agent has discovered. The oracle re-plans its route to prefer unwatched hops, pricing
+  a watched hop at `evasion_penalty` rather than forbidding it.
+- Defender arms `attention-narrow` and `attention-broad`, and the `targeted` defender
+  mode for `--defender`.
+- **`--detection-threshold`** as a first-class experimental condition, and `--family` /
+  `--family-hosts` on `rlattack equilibrium` so the policy grid can be solved on a
+  held-out topology.
+- `rlattack families` reports **`routes=`**, the number of node-disjoint routes from the
+  entry to the deepest host - the structural variable that decides whether monitoring
+  can be routed around at all.
+
+### Reported
+
+- **The policy grid mixes for the first time**, on `mesh` with a binding detection
+  threshold: attacker `shortest-path` 82% / `shortest-path-evasive` 18% against defender
+  `attention-narrow` 54% / `attention-broad` 46%, value 0.811 over 64 seeds. The
+  defender's entire support is the two attention arms; all seven uniform arms carry
+  weight zero. Evasion gains **+14.1 pp** against the narrow defender (95% CI
+  [+7.8, +21.1], p=0.0001, 128 paired seeds) and nothing against the broad one
+  (-3.1 pp, p=0.395). Against a uniform defender the gain is exactly zero on every
+  seed, which is the control.
+- **Two conditions are both required, and each alone leaves the grid pure.** Route
+  diversity: `mesh` averages 2.12 node-disjoint routes and is the only family that
+  mixes; chain, star, tree, and ring average ~1.00 and all stay pure. A binding
+  threshold: at the 0.9 default the oracle is detected in 2 of 32 episodes, so nothing
+  that re-prices risk can change an outcome. The window is narrow - at 0.25 the grid
+  collapses back to pure.
+- This resolves the root cause behind both of v0.9's negative results (items 52 and 53),
+  which were blocked on a defender axis that could not be traded off against. **Structure,
+  not policy richness, decided them.**
+
+### Changed
+
+- `ExperimentConfig.dynamics()` now honours `detection_threshold`; the default is
+  unchanged at 0.9, so every previously published number stands.
+- `ShortestPathOracle` plans segments under monitoring weights but orders objectives by
+  unweighted depth. Re-ordering by weighted distance can put the deep objective first on
+  a directed graph and leave no path back to the shallow one.
+
+### Known limitations
+
+- The evasive attacker is a hand-written oracle reading the monitoring channel, not a
+  learned policy: it shows the strategy pays, not that a learner finds it.
+- The monitoring channel reports watched hosts exactly for every discovered host, so the
+  evasion numbers are an optimistic bound on what an attacker who has to fingerprint
+  monitoring could achieve.
+
 ## [0.9.0] - 2026-08-30
 
 ### Added

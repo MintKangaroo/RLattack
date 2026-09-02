@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
@@ -178,6 +178,15 @@ class ObservationConfig:
     * **Detection visibility.** An attacker does not read the defender's exact
       suspicion score. By default the agent sees a quantized ``alert_level`` one-hot;
       the exact risk stays in ``info`` for reporting and analysis only.
+
+    ``expose_monitoring`` adds a per-host bit for the hosts a targeted defender is
+    watching, and only for hosts the agent has already discovered. Targeted monitoring
+    that cannot be observed is not something to route around, only extra variance, so
+    an attention experiment needs this on. It is off by default because it widens the
+    observation space, and a checkpoint trained without it cannot be loaded with it.
+    The modelled capability is fingerprinting a scanned host's monitoring posture; a
+    real attacker's read on that is noisier than this, so treat the resulting evasion
+    numbers as an optimistic bound.
     """
 
     host_capacity: int | None = None
@@ -189,6 +198,7 @@ class ObservationConfig:
     privilege_edge_capacity: int | None = None
     objective_capacity: int | None = None
     expose_exact_risk: bool = False
+    expose_monitoring: bool = False
     alert_levels: int = 3
 
     def __post_init__(self) -> None:
@@ -209,7 +219,9 @@ class ObservationConfig:
             raise ValueError("alert_levels must be at least 2")
 
     @classmethod
-    def for_curriculum(cls, *, expose_exact_risk: bool = False) -> ObservationConfig:
+    def for_curriculum(
+        cls, *, expose_exact_risk: bool = False, expose_monitoring: bool = False
+    ) -> ObservationConfig:
         """Return capacities large enough for every generated scenario class.
 
         A single policy can then be trained on ``small`` scenarios and evaluated on
@@ -226,6 +238,7 @@ class ObservationConfig:
             privilege_edge_capacity=8,
             objective_capacity=8,
             expose_exact_risk=expose_exact_risk,
+            expose_monitoring=expose_monitoring,
         )
 
 
@@ -344,6 +357,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         }
         if config.expose_exact_risk:
             channels["detection_risk"] = spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32)
+        if config.expose_monitoring:
+            channels["monitored_hosts"] = spaces.MultiBinary(self._host_width)
         self.observation_space = spaces.Dict(channels)
         self._reset_state()
 
@@ -373,6 +388,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._detected = False
         self._objective_captured = False
         self._host_hardening = np.zeros(self._host_width, dtype=np.float32)
+        self._host_attention = np.ones(self._host_width, dtype=np.float32)
+        self._aim_attention(self._default_watchlist())
         self._last_response_step = 0
         self._defender_actions = 0
         self._revoked_credentials = 0
@@ -648,7 +665,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             not edges or not self._succeeds(self.dynamics.discovery_probability)
         ):
             self._failed_discovery[target] = 1
-            return self._failed_attempt((self.scenario.hosts[target].id,))
+            host_id = self.scenario.hosts[target].id
+            return self._failed_attempt((host_id,), host_id)
         edge = min(edges, key=lambda edge: (edge.cost, edge.source_host_id))
         self._discovered_hosts[target] = 1
         self._path_cost += edge.cost
@@ -661,7 +679,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._reachable_hosts[target] = 1
         # A new vantage point makes previously fruitless probes worth repeating.
         self._failed_discovery[:] = 0
-        self._raise_risk(self.dynamics.pivot_risk)
+        self._raise_risk(self.dynamics.pivot_risk, edge.target_host_id)
         self._affected_nodes = (edge.source_host_id, edge.target_host_id)
         self._outcome = "success"
         return self.reward_config.pivot
@@ -676,7 +694,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
     def _enumerate_service(self, target: int) -> float:
         service = self.scenario.services[target]
         self._enumerated_services[target] = 1
-        self._raise_risk(self._host_detection_increment(service.host_id))
+        self._raise_risk(self._host_detection_increment(service.host_id), service.host_id)
         self._affected_nodes = (service.host_id, service.id)
         self._outcome = "success"
         return 0.0
@@ -685,7 +703,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         vulnerability = self.scenario.vulnerabilities[target]
         nodes = (vulnerability.service_id, vulnerability.id)
         if not self._succeeds(vulnerability.exploitability):
-            return self._failed_attempt(nodes)
+            service = self.scenario.services[self._service_index[vulnerability.service_id]]
+            return self._failed_attempt(nodes, service.host_id)
         self._validated_vulnerabilities[target] = 1
         self._affected_nodes = nodes
         self._outcome = "success"
@@ -700,7 +719,7 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             self._vulnerability_index[edge.vulnerability_id]
         ].exploitability
         if not self._succeeds(exploitability):
-            return self._failed_attempt(nodes)
+            return self._failed_attempt(nodes, credential.host_id)
         self._acquired_credentials[credential_index] = 1
         self._acquired_privileges[self._privilege_index[credential.privilege_id]] = 1
         self._affected_nodes = (*nodes, credential.privilege_id)
@@ -736,8 +755,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             self._terminated = True
         return self.reward_config.objective
 
-    def _failed_attempt(self, nodes: tuple[str, ...]) -> float:
-        self._raise_risk(self.dynamics.failed_attempt_risk)
+    def _failed_attempt(self, nodes: tuple[str, ...], host_id: str | None = None) -> float:
+        self._raise_risk(self.dynamics.failed_attempt_risk, host_id)
         self._affected_nodes = nodes
         self._outcome = "failed"
         return self.reward_config.failed_attempt
@@ -844,6 +863,11 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             self._host_hardening[np.flatnonzero(self._reachable_hosts)] += (
                 self.defender.hardening_step
             )
+            # For a targeted defender, hardening *is* re-aiming: it moves the watchers
+            # onto the ground the attacker has taken instead of raising sensitivity
+            # everywhere at once. Attention stays conserved, so the frontier the
+            # attacker has not reached yet gets cheaper as its rear gets watched.
+            self._aim_attention(self._alerted_watchlist())
         if response.revoke_credential is not None:
             self._revoke_credential(response.revoke_credential)
         return True
@@ -863,6 +887,81 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         if budget is None:
             return 0
         return min(2, int(self._defender_actions / budget * 3))
+
+    def _default_watchlist(self) -> tuple[str, ...]:
+        """Return the hosts a defender watches before it has seen anything.
+
+        Ranked by what a defender can actually justify watching without knowing the
+        attacker: exposure (how many services the host runs), then centrality (how many
+        network edges it carries), with a crown-jewel bonus for hosts holding an
+        objective. Ranking by objectives alone puts the watchers where nothing happens
+        - in these scenarios the objective host sees one pivot while the entry and route
+        hosts absorb every enumeration - which makes concentrated monitoring strictly
+        worse than uniform rather than a different shape of the same budget.
+
+        Deterministic on purpose: a standing monitoring posture is a deployment
+        decision, not a draw, and keeping it reproducible keeps a paired comparison
+        paired.
+        """
+
+        exposure: dict[str, int] = {host.id: 0 for host in self.scenario.hosts}
+        for service in self.scenario.services:
+            exposure[service.host_id] = exposure.get(service.host_id, 0) + 1
+        degree: dict[str, int] = {host.id: 0 for host in self.scenario.hosts}
+        for edge in self.scenario.network_edges:
+            degree[edge.source_host_id] = degree.get(edge.source_host_id, 0) + 1
+            degree[edge.target_host_id] = degree.get(edge.target_host_id, 0) + 1
+        crown = {objective.host_id for objective in self.scenario.objectives}
+
+        def rank(host_id: str) -> tuple[int, int, int, str]:
+            return (
+                -exposure.get(host_id, 0),
+                -degree.get(host_id, 0),
+                0 if host_id in crown else 1,
+                host_id,
+            )
+
+        return tuple(sorted((host.id for host in self.scenario.hosts), key=rank))
+
+    def _aim_attention(self, watchlist: Sequence[str]) -> None:
+        """Point the defender's monitoring at the first hosts of ``watchlist``.
+
+        Attention is conserved rather than added: the watched hosts are raised and every
+        other host drops by exactly as much in the mean, so a defender that looks harder
+        at one place is looking less hard everywhere else.
+        """
+
+        if not self.defender.targeted_attention:
+            return
+        focus, blind = self.defender.attention_split(len(self.scenario.hosts))
+        watched = list(dict.fromkeys(watchlist))[: self.defender.attention_hosts]
+        self._host_attention[:] = blind
+        for host_id in watched:
+            self._host_attention[self._host_index[host_id]] = focus
+
+    def _alerted_watchlist(self) -> tuple[str, ...]:
+        """Return where a defender re-aims once the attacker has shown itself.
+
+        Ground the attacker already holds comes first, because that is the evidence the
+        defender actually has; the standing posture fills the remaining slots.
+        """
+
+        reached = tuple(
+            self.scenario.hosts[index].id
+            for index in np.flatnonzero(self._reachable_hosts[: len(self.scenario.hosts)])
+        )
+        return (*reached, *self._default_watchlist())
+
+    def monitored_hosts(self) -> tuple[str, ...]:
+        """Return the hosts the defender is currently watching most closely."""
+
+        if not self.defender.targeted_attention:
+            return ()
+        return tuple(
+            host.id
+            for index, host in enumerate(self.scenario.hosts)
+            if self._host_attention[index] > 1.0
+        )
 
     def _observed_risk(self) -> float:
         """Return the defender's noisy estimate of the attacker's detection risk."""
@@ -885,8 +984,31 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         if not still_granted:
             self._acquired_privileges[self._privilege_index[privilege_id]] = 0
 
-    def _raise_risk(self, increment: float) -> None:
-        self._detection_risk = min(1.0, self._detection_risk + increment * self._risk_scale)
+    def _raise_risk(self, increment: float, host_id: str | None = None) -> None:
+        """Accumulate detection risk for one action, priced by where it happened.
+
+        Attribution is what makes targeted monitoring routable. With a uniform
+        defender every action costs the same wherever it lands, so the only way to
+        lower risk is to act less; once attention is concentrated, acting on a blind
+        host is cheaper than acting on a watched one and *where* becomes a decision.
+        """
+
+        scaled = increment * self._risk_scale * self._attention_multiplier(host_id)
+        self._detection_risk = min(1.0, self._detection_risk + scaled)
+
+    def _attention_multiplier(self, host_id: str | None) -> float:
+        """Return how closely the defender is watching one host.
+
+        An action that cannot be attributed to a host - privilege escalation walks the
+        privilege graph, not the network - is priced at the defender's mean attention,
+        so it is neither a free move nor a targeted one.
+        """
+
+        if not self.defender.targeted_attention:
+            return 1.0
+        if host_id is None:
+            return float(np.mean(self._host_attention[: len(self.scenario.hosts)]))
+        return float(self._host_attention[self._host_index[host_id]])
 
     def _success_probability(self, exploitability: float | None) -> float:
         if not self.dynamics.stochastic:
@@ -937,7 +1059,19 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         }
         if self.observation_config.expose_exact_risk:
             observation["detection_risk"] = np.array([self._detection_risk], dtype=np.float32)
+        if self.observation_config.expose_monitoring:
+            observation["monitored_hosts"] = self._monitoring_observation()
         return observation
+
+    def _monitoring_observation(self) -> np.ndarray[Any, np.dtype[np.int8]]:
+        """Return the watched hosts the agent has discovered, as a padded bit vector."""
+
+        watched = np.zeros(self._host_width, dtype=np.int8)
+        if not self.defender.targeted_attention:
+            return watched
+        real = len(self.scenario.hosts)
+        watched[:real] = (self._host_attention[:real] > 1.0).astype(np.int8)
+        return watched * self._discovered_hosts
 
     def _host_detection_increment(self, host_id: str) -> float:
         probabilities = [

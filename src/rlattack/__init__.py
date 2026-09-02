@@ -1,3 +1,3 @@
 """RLAttack: reinforcement learning over simulated attack graphs."""
 
-__version__: str = "0.9.0"
+__version__: str = "1.0.0"

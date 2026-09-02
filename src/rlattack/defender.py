@@ -36,6 +36,21 @@ class DefenderConfig:
     per-response penalty prices responding but still lets a defender respond without
     limit; a budget models the operational load a team can actually carry, and forces
     the defender to choose *when* to spend rather than only whether to act at all.
+
+    ``attention_hosts`` makes monitoring *targeted* rather than uniform. With the
+    default of ``0`` every host is watched equally, which is the model used up to v0.9:
+    detection risk is one scalar that penalizes all activity at the same rate, so no
+    attacker strategy trades off against another and doing less is always better. When
+    set, the defender watches that many hosts at ``attention_focus`` and is
+    correspondingly blind elsewhere.
+
+    Attention is *conserved*, and deliberately so: the blind multiplier is derived from
+    the focus and the network size rather than configured, so that the mean multiplier
+    over hosts is exactly 1 whatever the allocation. Without that, a defender watching
+    more hosts is simply a stronger defender, and a grid comparing allocations measures
+    total monitoring rather than its shape. Conserved, the arms differ only in shape:
+    watching narrowly buys depth on a few hosts at the price of cover on the rest, so
+    an attacker can route around a narrow defender while a broad one punishes breadth.
     """
 
     enabled: bool = False
@@ -46,6 +61,8 @@ class DefenderConfig:
     response_latency: int = 3
     observation_noise: float = 0.06
     response_budget: int | None = None
+    attention_hosts: int = 0
+    attention_focus: float = 3.0
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.alert_threshold <= 1.0:
@@ -62,12 +79,44 @@ class DefenderConfig:
             raise ValueError("observation_noise must not be negative")
         if self.response_budget is not None and self.response_budget < 1:
             raise ValueError("response_budget must be positive when set")
+        if self.attention_hosts < 0:
+            raise ValueError("attention_hosts must not be negative")
+        if self.attention_focus < 1.0:
+            raise ValueError("attention_focus must be at least 1")
+
+    @property
+    def targeted_attention(self) -> bool:
+        """Return whether monitoring is concentrated rather than spread uniformly."""
+
+        return self.enabled and self.attention_hosts > 0
+
+    def attention_split(self, hosts: int) -> tuple[float, float]:
+        """Return the (focus, blind) multipliers for a network of ``hosts`` hosts.
+
+        The pair always averages to 1 across the network. ``attention_focus`` is capped
+        at ``hosts / attention_hosts``, the point where watching that many hosts that
+        closely would already consume the whole budget; past it the defender is simply
+        blind everywhere else rather than negatively attentive.
+        """
+
+        watched = min(self.attention_hosts, hosts)
+        if watched <= 0 or watched >= hosts:
+            return 1.0, 1.0
+        focus = min(self.attention_focus, hosts / watched)
+        blind = (hosts - watched * focus) / (hosts - watched)
+        return focus, blind
 
     @classmethod
     def adaptive(cls) -> DefenderConfig:
         """Return the default enabled defender."""
 
         return cls(enabled=True)
+
+    @classmethod
+    def targeted(cls) -> DefenderConfig:
+        """Return an enabled defender whose monitoring is concentrated on few hosts."""
+
+        return cls(enabled=True, attention_hosts=2)
 
 
 @dataclass(frozen=True)
@@ -176,6 +225,18 @@ DEFAULT_ARMS: tuple[DefenderArm, ...] = (
             revocation_probability=1.0,
             response_cooldown=2,
         ),
+    ),
+    # The two arms below spend a conserved attention budget differently, which is what
+    # items 52 and 53 found missing: with uniform monitoring every attacker is punished
+    # at the same rate everywhere, so the grid has nothing to trade off. Narrow watches
+    # one host deeply and is blind on the rest; broad covers more ground shallowly.
+    DefenderArm(
+        "attention-narrow",
+        DefenderConfig(enabled=True, attention_hosts=1, attention_focus=4.0),
+    ),
+    DefenderArm(
+        "attention-broad",
+        DefenderConfig(enabled=True, attention_hosts=3, attention_focus=1.6),
     ),
 )
 

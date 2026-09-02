@@ -184,6 +184,8 @@ class ShortestPathOracle:
 
     scenario: Scenario
     redundant: bool = False
+    evasive: bool = False
+    evasion_penalty: float = 6.0
     route: tuple[str, ...] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -198,20 +200,48 @@ class ShortestPathOracle:
             if self.scenario.entry_host_ids
             else self.scenario.hosts[0].id
         )
-        self.route = self._plan_route(graph.subgraph(hosts), entry_host)
         self._host_index = {host.id: index for index, host in enumerate(self.scenario.hosts)}
-        self._route_indices = tuple(self._host_index[host_id] for host_id in self.route)
-        self._route_hosts = set(self.route)
+        self._host_graph = graph.subgraph(hosts)
+        self._entry_host = entry_host
+        self._avoiding: frozenset[str] = frozenset()
+        self._take_route(self._plan_route(self._host_graph, entry_host))
         self._required_actions = {
             host.id: self._required_for_host(host.id) for host in self.scenario.hosts
         }
 
-    def _plan_route(self, host_graph: Any, entry_host: str) -> tuple[str, ...]:
+    def _take_route(self, route: tuple[str, ...]) -> None:
+        """Adopt ``route`` and refresh the indices derived from it."""
+
+        self.route = route
+        self._route_indices = tuple(self._host_index[host_id] for host_id in route)
+        self._route_hosts = set(route)
+
+    def _plan_route(
+        self, host_graph: Any, entry_host: str, avoid: frozenset[str] = frozenset()
+    ) -> tuple[str, ...]:
         """Chain shortest paths through every objective host, shallowest first.
 
         Routing only to the deepest objective is not enough: network shortcuts can skip
         past a shallower objective host entirely, leaving the oracle to backtrack.
+
+        ``avoid`` prices hops onto monitored hosts at ``evasion_penalty`` instead of 1,
+        so a watched host is taken only when the detour around it is longer than the
+        penalty. It is a preference, not a prohibition: an objective host under watch
+        still has to be reached.
+
+        Only the segments are re-weighted, never the order the objectives are visited
+        in. Which objective is shallower is a property of the graph, not of where the
+        defender happens to be looking, and on a directed graph re-ordering by weighted
+        distance can put the deep objective first and leave no path back to the
+        shallow one.
         """
+
+        weight = None
+        if avoid:
+
+            def weight(source: str, target: str, data: dict[str, Any]) -> float:
+                del source, data
+                return self.evasion_penalty if target in avoid else 1.0
 
         try:
             depths = {
@@ -223,7 +253,7 @@ class ShortestPathOracle:
         route = [entry_host]
         current = entry_host
         for host_id in sorted(depths, key=lambda host: (depths[host], host)):
-            segment = nx.shortest_path(host_graph, current, host_id)
+            segment = nx.shortest_path(host_graph, current, host_id, weight=weight)
             route.extend(segment[1:])
             current = host_id
         return tuple(route)
@@ -265,12 +295,38 @@ class ShortestPathOracle:
         )
 
     def reset(self, *, seed: int | None = None) -> None:
-        """Reset the stateless oracle for a new episode."""
+        """Return the oracle to its unweighted route for a new episode."""
 
         del seed
+        if self._avoiding:
+            self._avoiding = frozenset()
+            self._take_route(self._plan_route(self._host_graph, self._entry_host))
+
+    def _reroute_around_monitoring(self, observation: Observation) -> None:
+        """Re-plan around the monitored hosts the agent can currently see.
+
+        The oracle only ever learns about monitoring on hosts it has discovered, so the
+        route is revised as the picture fills in rather than planned against the
+        defender's full posture.
+        """
+
+        channel = observation.get("monitored_hosts")
+        if channel is None:
+            return
+        watched = frozenset(
+            self.scenario.hosts[index].id
+            for index in np.flatnonzero(channel)
+            if index < len(self.scenario.hosts)
+        )
+        if watched == self._avoiding:
+            return
+        self._avoiding = watched
+        self._take_route(self._plan_route(self._host_graph, self._entry_host, watched))
 
     def predict(self, observation: Observation, info: dict[str, object]) -> np.int64:
         valid_actions(info)
+        if self.evasive:
+            self._reroute_around_monitoring(observation)
         collect = _first_valid(info, Action.COLLECT_SIMULATED_OBJECTIVE)
         if collect is not None:
             return collect

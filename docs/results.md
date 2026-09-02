@@ -248,6 +248,102 @@ the oracle and a learned policy should be read per family rather than in aggrega
 Every family is solvable under deterministic dynamics, which a test asserts, so a low
 score is the agent's and not the topology's.
 
+## Targeted attention, and the first mixed equilibrium
+
+Up to v0.9 the defender's monitoring was a single scalar: every action raised the same
+detection risk wherever it happened. That is why the policy grid had a dominant strategy
+(item 53) and why adversarial training had no pressure to learn against (item 52) - if
+risk depends only on *what* you do and never on *where*, then doing less is always
+better and no two attacker strategies trade off.
+
+v1.0 replaces the scalar with a **conserved attention budget**. A targeted defender
+watches `attention_hosts` hosts closely and is correspondingly blind on the rest, with
+the blind multiplier *derived* from the focus so that the mean over hosts is exactly 1.
+Conservation is the point: without it a defender watching more hosts is simply a
+stronger defender, and a grid over allocations would measure how much monitoring there
+is rather than where it points. The attacker sees which of its *discovered* hosts are
+watched, and `shortest-path-evasive` re-plans its route to prefer unwatched hops.
+
+### The grid mixes on mesh
+
+`--family mesh --family-hosts 8 --detection-threshold 0.4`, 64 shared seeds, full
+6 x 9 grid. Attacker payoff is mean episode reward; the row player maximizes.
+
+| Attacker | attention-narrow | attention-broad |
+| --- | --- | --- |
+| shortest-path | 0.797 | **0.828** |
+| shortest-path-evasive | **0.875** | 0.734 |
+
+Neither side has a dominant strategy: evasion beats the narrow defender and loses to
+the broad one, so the equilibrium is **mixed for the first time in this project** -
+attacker `shortest-path` 82% / `shortest-path-evasive` 18%, defender `attention-narrow`
+54% / `attention-broad` 46%, value 0.811.
+
+The defender's entire support is the two attention arms. All seven uniform arms -
+`patient`, `balanced`, `trigger-happy`, `revoke-heavy`, `fast`, `harden-only`,
+`revoke-only` - carry weight zero, which is direct evidence that the mixing comes from
+targeted attention and not from enriching the grid with more arms.
+
+Evasion's advantage against the narrow defender is real, not sampling noise
+(mesh, 128 seeds, paired):
+
+| Defender | Direct | Evasive | Gain | 95% CI | p |
+| --- | --- | --- | --- | --- | --- |
+| attention-narrow | 73.4% | 87.5% | **+14.1 pp** | [+7.8, +21.1] | 0.0001 |
+| attention-broad | 84.4% | 81.2% | -3.1 pp | [-8.6, +2.3] | 0.395 |
+| balanced *(uniform)* | - | - | **+0.000** | - | - |
+
+The uniform row is the control and it is exactly zero on every seed: with no monitoring
+to observe, the evasive agent is the plain oracle. That is what rules out the gain being
+an artefact of the rerouting code rather than of routing around a watcher.
+
+### Two conditions are required, and each alone is not enough
+
+Solving the same grid on every family at the same threshold:
+
+| Family | Node-disjoint routes (mean of 16 seeds) | Equilibrium |
+| --- | --- | --- |
+| chain | 1.06 | pure (`shortest-path` / `revoke-only`) |
+| star | 1.00 | pure (`shortest-path` / `attention-narrow`) |
+| tree | 1.00 | pure (`shortest-path` / `attention-broad`) |
+| ring | 1.00 | pure (`random` / `trigger-happy`, value 0.000) |
+| **mesh** | **2.12** | **mixed** |
+
+**Route diversity** is the discriminating variable, and `rlattack families` now reports
+it per instance (`routes=`). Mesh is the only family that reliably offers more than one
+node-disjoint route to the deepest host, and it is the only one that mixes. This is not a tuning accident: with
+a single route there is nowhere else to go, so a watcher cannot be evaded however the
+attention budget is shaped. It also explains why the generator's own shape never mixed -
+it averages 1.50 disjoint routes, and in 13 of 16 seeds the host the defender watches is
+the entry host or an objective host, both of which every route must contain.
+
+**A binding detection threshold** is the second requirement. At the published default of
+0.9 the graph oracle is detected in 2 of 32 episodes and accumulates a mean risk of 0.48,
+so detection is simply not the constraint that decides an episode and nothing that
+re-prices risk can change an outcome. `--detection-threshold` is therefore a first-class
+experimental condition rather than a constant. The window is narrow: at 0.25 the grid
+collapses back to pure, because evasion starts helping against both defenders at once.
+
+Read together with the held-out family results above, both of v0.9's negative results
+have the same explanation - **structure, not policy richness, decided them**.
+
+### Reproducing
+
+```bash
+rlattack equilibrium --family mesh --family-hosts 8 \
+  --detection-threshold 0.4 --episodes 64
+rlattack equilibrium --family chain --detection-threshold 0.4 --episodes 64
+rlattack families --agent shortest-path --episodes 8   # reports routes= per family
+```
+
+### What this does not show
+
+The evasive attacker is a hand-written oracle reading the monitoring channel, not a
+learned policy: it shows the strategy pays, not that a learner finds it. The monitoring
+channel is also generous - it reports watched hosts exactly for every discovered host,
+so the evasion numbers are an optimistic bound on what an attacker who has to fingerprint
+monitoring could achieve. Both are roadmap items 59 and 60.
+
 ## Robustness to the experimental conditions
 
 `medium/hard`, 32 shared seeds, paired against the control condition.

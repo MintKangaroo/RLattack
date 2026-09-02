@@ -10,7 +10,7 @@
     <a href="https://github.com/MintKangaroo/RLattack/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MintKangaroo/RLattack/actions/workflows/ci.yml/badge.svg?branch=main"></a>
     <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-56f39a?logo=python&logoColor=07100e">
     <img alt="Coverage 100%" src="https://img.shields.io/badge/coverage-100%25-56f39a">
-    <img alt="Version 0.3.0" src="https://img.shields.io/badge/version-0.4.0-71a7ff">
+    <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-71a7ff">
     <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-d7e2dc"></a>
   </p>
   <p>
@@ -152,7 +152,7 @@ rlattack scenario \
 | `rlattack game` | 에피소드 간 학습하는 defender와의 대전 |
 | `rlattack sweep` | hyperparameter trial 학습과 비교 |
 | `rlattack import` | 외부 attack graph(GraphML/GML/JSON)를 sanitized scenario로 변환 |
-| `rlattack equilibrium` | attacker × defender 정책 격자를 행렬 게임으로 풀이 |
+| `rlattack equilibrium` | attacker × defender 정책 격자를 행렬 게임으로 풀이 (`--family`, `--detection-threshold`) |
 | `rlattack families` | 생성기가 만들 수 없는 구조 가족에서의 held-out 평가 |
 | `rlattack train` | optional DQN/PPO policy 학습 (`.[training]` 필요) |
 | `rlattack scenario` | 검증된 scenario를 JSON으로 내보내기 |
@@ -466,10 +466,11 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 - [x] Two-learner game: adaptive attacker and a defender conditioned on the episode
 - [x] Sanitized import of externally published attack graphs
 - [x] Held-out structural families as an out-of-distribution test set
+- [x] Targeted defender attention, an evasive attacker, and the first mixed equilibrium
 
-현재 `v0.4.0`은 연구용 end-to-end workflow를 제공합니다. 실제 환경의 다양성을 합성 graph가
+현재 `v1.0.0`은 연구용 end-to-end workflow를 제공합니다. 실제 환경의 다양성을 합성 graph가
 완전히 대표하지 않으며, explainability output은 인과적 설명이나 보안 보장을 의미하지 않습니다.
-다음 확장 후보(표적화된 defender 주의, 학습 정책의 가족별 평가)는
+다음 확장 후보(학습 정책의 가족별 평가, monitoring을 우회하도록 *학습*하는 정책)는
 [Roadmap](docs/roadmap.md)에서 관리합니다. 변경 이력은 [CHANGELOG](CHANGELOG.md)를 참고하세요.
 
 ## 문서

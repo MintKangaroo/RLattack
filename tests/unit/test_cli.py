@@ -114,12 +114,13 @@ def test_cli_benchmark_exports_episode_records(
     )
     rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
 
-    assert len(rows) == 15
+    assert len(rows) == 18
     assert {row["agent"] for row in rows} == {
         "random",
         "greedy",
         "rule-based",
         "shortest-path",
+        "shortest-path-evasive",
         "shortest-path-broad",
     }
     assert "generalization benchmark" in capsys.readouterr().out
@@ -907,8 +908,8 @@ def test_cli_equilibrium_solves_the_policy_grid(
 
     assert "attacker x defender equilibrium" in printed
     assert "value     :" in printed
-    assert len(solved["payoffs"]) == 5
-    assert len(solved["payoffs"][0]) == 7
+    assert len(solved["payoffs"]) == 6
+    assert len(solved["payoffs"][0]) == 9
     assert sum(solved["attacker_mixture"]) == pytest.approx(1.0)
 
 
@@ -1021,3 +1022,38 @@ def test_every_subcommand_has_a_handler() -> None:
     handled = set(cli._COMMANDS) | {"demo"}
 
     assert declared == handled
+
+
+def test_cli_equilibrium_solves_a_held_out_family_grid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Structure decides whether the grid has anything to trade off, so it is a knob."""
+
+    output = tmp_path / "mesh-equilibrium.json"
+
+    assert (
+        cli.main(
+            [
+                "equilibrium",
+                "--family",
+                "mesh",
+                "--family-hosts",
+                "6",
+                "--detection-threshold",
+                "0.4",
+                "--episodes",
+                "2",
+                "--iterations",
+                "500",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    solved = json.loads(output.read_text(encoding="utf-8"))
+
+    assert "mesh/6 hosts" in printed
+    assert "threshold 0.4" in printed
+    assert len(solved["payoffs"]) == 6

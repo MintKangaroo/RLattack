@@ -24,9 +24,16 @@ from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.reward import RewardStrategy, build_reward_config
 from rlattack.scenario import Scenario
 
-AgentName = Literal["random", "greedy", "rule-based", "shortest-path", "shortest-path-broad"]
+AgentName = Literal[
+    "random",
+    "greedy",
+    "rule-based",
+    "shortest-path",
+    "shortest-path-broad",
+    "shortest-path-evasive",
+]
 ObservationMode = Literal["scenario", "curriculum"]
-DefenderMode = Literal["passive", "adaptive"]
+DefenderMode = Literal["passive", "adaptive", "targeted"]
 DiscoveryMode = Literal["exact", "noisy"]
 
 REWARD_STRATEGIES: tuple[RewardStrategy, ...] = (
@@ -46,6 +53,7 @@ AGENT_LABELS: dict[AgentName, str] = {
     "rule-based": "Rule-based",
     "shortest-path": "Graph oracle",
     "shortest-path-broad": "Graph oracle (redundant)",
+    "shortest-path-evasive": "Graph oracle (evasive)",
 }
 
 
@@ -64,6 +72,7 @@ class ExperimentConfig:
     observation: ObservationMode = "scenario"
     defender: DefenderMode = "passive"
     discovery: DiscoveryMode = "exact"
+    detection_threshold: float = 0.9
 
     def __post_init__(self) -> None:
         if self.size not in {"small", "medium", "large"}:
@@ -84,30 +93,55 @@ class ExperimentConfig:
             raise ValueError(f"benchmark_episodes must be at most {MAX_BENCHMARK_EPISODES}")
         if self.observation not in ("scenario", "curriculum"):
             raise ValueError("observation must be scenario or curriculum")
-        if self.defender not in ("passive", "adaptive"):
-            raise ValueError("defender must be passive or adaptive")
+        if self.defender not in ("passive", "adaptive", "targeted"):
+            raise ValueError("defender must be passive, adaptive, or targeted")
         if self.discovery not in ("exact", "noisy"):
             raise ValueError("discovery must be exact or noisy")
+        if not 0.0 < self.detection_threshold <= 1.0:
+            raise ValueError("detection_threshold must be in (0, 1]")
 
     def dynamics(self) -> DynamicsConfig:
-        """Return the transition-uncertainty configuration for this experiment."""
+        """Return the transition-uncertainty configuration for this experiment.
+
+        ``detection_threshold`` is a condition rather than a constant because at the
+        default of 0.9 detection almost never fires against a competent attacker - the
+        graph oracle is caught in roughly one episode in twenty - so nothing that
+        re-prices risk can change an outcome, and a grid built on risk trade-offs has
+        no trade-off to find.
+        """
 
         noisy = self.discovery == "noisy"
-        if self.stochastic:
-            return DynamicsConfig(noisy_discovery=noisy)
-        return DynamicsConfig(stochastic=False, noisy_discovery=noisy)
+        return DynamicsConfig(
+            stochastic=self.stochastic,
+            noisy_discovery=noisy,
+            detection_threshold=self.detection_threshold,
+        )
 
     def defender_config(self) -> DefenderConfig:
-        """Return the defender condition: passive control, or adaptive treatment."""
+        """Return the defender condition: passive control, or one of two treatments.
 
-        return DefenderConfig.adaptive() if self.defender == "adaptive" else DefenderConfig()
+        ``adaptive`` spreads monitoring uniformly; ``targeted`` concentrates it on a
+        few hosts, which is what lets an attacker route around the defender instead of
+        only doing less.
+        """
+
+        if self.defender == "targeted":
+            return DefenderConfig.targeted()
+        if self.defender == "adaptive":
+            return DefenderConfig.adaptive()
+        return DefenderConfig()
 
     def observation_config(self) -> ObservationConfig:
-        """Return the observation interface: scenario-sized, or fixed for transfer."""
+        """Return the observation interface: scenario-sized, or fixed for transfer.
 
+        A targeted defender is reported to the agent, because monitoring it cannot see
+        is not something it can route around.
+        """
+
+        monitoring = self.defender == "targeted"
         if self.observation == "curriculum":
-            return ObservationConfig.for_curriculum()
-        return ObservationConfig()
+            return ObservationConfig.for_curriculum(expose_monitoring=monitoring)
+        return ObservationConfig(expose_monitoring=monitoring)
 
 
 @dataclass(frozen=True)
@@ -159,6 +193,8 @@ def create_agent(name: AgentName, scenario: Scenario, *, seed: int) -> Agent:
         return ShortestPathOracle(scenario)
     if name == "shortest-path-broad":
         return ShortestPathOracle(scenario, redundant=True)
+    if name == "shortest-path-evasive":
+        return ShortestPathOracle(scenario, evasive=True)
     raise ValueError(f"unsupported baseline agent: {name}")
 
 

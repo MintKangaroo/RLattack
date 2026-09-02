@@ -110,26 +110,46 @@
     grid favours the adversarially trained policy significantly, and the two exact
     conditions trend against it. The defender axis is nearly inert - adaptive vs passive
     is insignificant *within* each policy - so adversarial training builds robustness to
-    pressure that is not there. Same root cause as item 53; see item 55)
+    pressure that is not there. Same root cause as item 53; see items 55 and 58)
 53. Enrich the policy grid until the equilibrium is mixed. (**answered negatively**:
     enriching it did not produce mixing, and the reason is that detection risk is a
     single scalar penalizing all activity uniformly, so no attacker strategy trades off
-    against another - see item 55)
+    against another - see item 55, which reproduces the mixing this item could not by
+    replacing the single scalar with per-host attention)
 54. A held-out scenario family the generator cannot produce. (completed: star, tree,
     mesh, and ring topologies, which separate agents sharply - the graph oracle scores
     100% on star and 12.5% on ring under noisy discovery)
 
-## Next
+## v1.0 - targeted attention and the first mixed equilibrium
 
 55. Give the defender targeted attention - per-host monitoring an attacker can route
-    around - so that evading one defender exposes you to another. Without it the policy
-    grid cannot have a mixed equilibrium, because doing less is always better, and
-    adversarial training has no pressure to learn against (items 52 and 53 both stall
-    here). This is the highest-value item on the list.
+    around - so that evading one defender exposes you to another. (**completed, and it
+    unblocks items 52 and 53**: with a conserved attention budget, an evasive attacker
+    arm, and detection made binding, the attacker x defender grid mixes for the first
+    time - attacker `shortest-path` 82% / `shortest-path-evasive` 18% against defender
+    `attention-narrow` 54% / `attention-broad` 46%. Two conditions are *both* required,
+    and each alone leaves the grid pure: **route diversity**, because routing around a
+    watcher needs somewhere else to route - `mesh` is the only family with more than
+    one node-disjoint route and the only one that mixes - and a **binding detection
+    threshold**, because at the 0.9 default the oracle is detected in ~5% of episodes
+    and nothing that re-prices risk can change an outcome.)
+
+## Next
+
 56. Report the family results for trained policies, not only baselines, and check
     whether curriculum training on chains transfers to star, tree, mesh, and ring.
 57. Vary host count within a family, so structure and scale are separable rather than
     confounded in one number.
+58. Re-run item 52 (adversarial training) in the condition that item 55 found: mesh
+    structure with a binding threshold. The negative result there was explained by an
+    inert defender axis, and that axis is no longer inert - the two attention arms are
+    the entire defender support of the mixed equilibrium.
+59. Train a policy that learns to route around monitoring, rather than reading the
+    monitoring channel through a hand-written oracle. `shortest-path-evasive` shows the
+    strategy pays; it does not show a learner can find it.
+60. Give the attacker a noisier read on monitoring. The current channel reports watched
+    hosts exactly for every discovered host, which is an optimistic bound on what an
+    attacker can fingerprint.
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

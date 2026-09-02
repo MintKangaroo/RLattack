@@ -113,7 +113,7 @@ def test_dashboard_view_model_matches_the_configured_experiment() -> None:
     data = build_dashboard_data(config)
 
     assert data["config"]["seed"] == 2
-    assert len(data["benchmarks"]) == 5
+    assert len(data["benchmarks"]) == 6
     assert data["episode"]["steps"] == len(data["episode"]["trace"])
 
 
