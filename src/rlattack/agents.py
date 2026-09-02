@@ -174,9 +174,16 @@ class ShortestPathOracle:
 
     The oracle sees the static simulated graph and is an upper-bound baseline; it never
     adapts to a real target.
+
+    ``redundant`` collects a credential on every reachable host rather than only the ones
+    the route needs. The extra footholds survive a defender that revokes credentials, at
+    the cost of the noise those extra exploits make - a deliberate trade-off, so that the
+    policy grid contains peers with different weaknesses rather than one dominant
+    strategy.
     """
 
     scenario: Scenario
+    redundant: bool = False
     route: tuple[str, ...] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -194,6 +201,7 @@ class ShortestPathOracle:
         self.route = self._plan_route(graph.subgraph(hosts), entry_host)
         self._host_index = {host.id: index for index, host in enumerate(self.scenario.hosts)}
         self._route_indices = tuple(self._host_index[host_id] for host_id in self.route)
+        self._route_hosts = set(self.route)
         self._required_actions = {
             host.id: self._required_for_host(host.id) for host in self.scenario.hosts
         }
@@ -270,6 +278,10 @@ class ShortestPathOracle:
         if escalate is not None:
             return escalate
         reachable = observation["reachable_hosts"]
+        if self.redundant:
+            spare = self._expand_breadth(info, observation, reachable)
+            if spare is not None:
+                return spare
         for host_id, host_index in zip(self.route, self._route_indices, strict=True):
             if reachable[host_index]:
                 action = self._advance_on_host(info, host_id)
@@ -282,6 +294,37 @@ class ShortestPathOracle:
             if action is not None:
                 return action
         return GreedyAgent().predict(observation, info)
+
+    def _expand_breadth(
+        self,
+        info: dict[str, object],
+        observation: Observation,
+        reachable: np.ndarray[Any, Any],
+    ) -> np.int64 | None:
+        """Take the whole network rather than only the route.
+
+        Spare footholds survive a defender that revokes credentials; the extra exploits
+        needed to earn them are the price.
+        """
+
+        discovered = observation["discovered_hosts"]
+        for host in self.scenario.hosts:
+            index = self._host_index[host.id]
+            if host.id in self._route_hosts:
+                continue
+            if reachable[index]:
+                action = self._advance_on_host(info, host.id)
+                if action is not None:
+                    return action
+            elif discovered[index]:
+                action = _first_valid(info, Action.PIVOT_SIMULATED_NETWORK, (index,))
+                if action is not None:
+                    return action
+            else:
+                action = _first_valid(info, Action.DISCOVER_HOST, (index,))
+                if action is not None:
+                    return action
+        return None
 
     def _advance_on_host(self, info: dict[str, object], host_id: str) -> np.int64 | None:
         """Exploit the current route host far enough to unlock the next pivot."""

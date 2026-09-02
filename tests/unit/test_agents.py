@@ -1,3 +1,5 @@
+from typing import cast
+
 import numpy as np
 import pytest
 
@@ -151,3 +153,25 @@ def test_oracle_validates_graph_and_supports_implicit_entry() -> None:
 def test_rule_agent_requires_rules_that_cover_the_action_space() -> None:
     with pytest.raises(RuntimeError, match="rule list"):
         RuleBasedAgent(rules=()).predict({}, stop_only_info())
+
+
+def test_the_broad_oracle_takes_more_of_the_network_than_the_route() -> None:
+    """Redundancy is a distinct strategy, not a relabelled oracle."""
+
+    scenario = generate_scenario("medium", "hard", seed=0)
+
+    def run(redundant: bool) -> tuple[int, int]:
+        env = AttackPathEnv(scenario, step_budget=90, dynamics=DynamicsConfig.deterministic())
+        agent = ShortestPathOracle(scenario, redundant=redundant)
+        observation, info = env.reset(seed=0)
+        terminated = truncated = False
+        while not terminated and not truncated:
+            observation, _, terminated, truncated, info = env.step(agent.predict(observation, info))
+        credentials = int(observation["acquired_credentials"].sum())
+        return cast(int, info["steps"]), credentials
+
+    focused_steps, focused_credentials = run(False)
+    broad_steps, broad_credentials = run(True)
+
+    assert broad_credentials > focused_credentials
+    assert broad_steps > focused_steps, "the extra footholds cost extra actions"

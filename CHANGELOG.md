@@ -3,6 +3,48 @@
 All notable changes to RLAttack are recorded here. The project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-08-30
+
+### Added
+
+- **`rlattack families`** evaluates on star, tree, mesh, and ring topologies the
+  generator cannot produce, imported through the same sanitized path as an external
+  attack graph. Structure dominates the result: under noisy discovery the graph oracle
+  scores 100% on star and mesh, 56.2% on the generator's own chain, and **12.5% on a
+  ring** - worse on a held-out shape than on the one it was designed for. A single
+  success rate on the generator's shape says little about a policy.
+- **`pivot-focused` reward strategy**, moving reward mass from discovery (1.0 to 0.2) to
+  pivoting (1.0 to 2.5). Measured, it is **worse**: 0% success under noisy discovery
+  against 6.2% for `risk-aware`. Pivoting requires an already-discovered host, so
+  pricing discovery below its expected value makes the prerequisite unprofitable and the
+  reward it leads to unreachable. Kept as the recorded counter-example rather than a
+  recommended setting.
+- Two specializing defender arms (`harden-only`, `revoke-only`) and a broad attacker
+  (`shortest-path-broad`) that takes the whole network rather than only its route.
+- **`scripts/ramguard.sh`** runs a long training job inside a transient cgroup with a
+  hard memory cap and a pre-flight free-memory check, so a runaway run is killed on
+  its own instead of pushing a shared machine into swap.
+
+### Reported
+
+- **Training against a learning defender did not transfer better.** Two MaskablePPO
+  policies differing only in `--adversarial`, evaluated on the same condition grid with
+  32 seeds paired: no condition favours the adversarially trained one significantly, and
+  both exact conditions trend against it (passive/exact -2.50 reward, p = 0.069; 84.4%
+  success against 96.9%). Its apparent edge under noisy discovery is 2 episodes out of
+  32 against 0 (p = 0.71) bought at a 15.6% detection rate against 0%. The reason shows
+  inside each policy's own grid: adaptive against passive is insignificant for both
+  (p = 0.515 and p = 0.228), so the defender axis is nearly inert and adversarial
+  training hardens against pressure that is not there. Same root cause as the missing
+  mixed equilibrium below; both wait on targeted defender attention.
+- **Enriching the policy grid did not produce a mixed equilibrium.** It stays pure -
+  shortest-path against `fast`, value 0.79 - because redundancy is not a trade-off here
+  but strictly worse: against `revoke-only` the broad oracle scores 43.8% where the
+  focused one scores 75.0%, the extra exploits costing more in detection than the spare
+  credentials are worth. Detection risk is a single scalar penalizing all activity
+  uniformly, so doing less is always better and no attacker strategy trades off against
+  another. A mixed equilibrium needs targeted defender attention.
+
 ## [0.8.0] - 2026-08-29
 
 ### Added

@@ -94,7 +94,7 @@ def test_dashboard_data_is_reproducible_and_complete() -> None:
     assert first == second
     assert first["schema_version"] == "2.0"
     assert first["episode"]["success"] is True
-    assert len(first["benchmarks"]) == 4
+    assert len(first["benchmarks"]) == 5
     rule_metrics = next(
         metric for metric in first["benchmarks"] if metric["agent_name"] == "rule-based"
     )

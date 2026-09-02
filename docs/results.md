@@ -6,6 +6,21 @@ so they can be reproduced exactly with the commands shown.
 Model checkpoints are not committed (`artifacts/` is ignored). Regenerate them with the
 training command below.
 
+## How to read these tables
+
+Each section states its own seeds, condition, and scenario class, and they are not the
+same across sections. Three rules:
+
+- **Compare within a table, not across them.** Step budgets differ by section (64 for
+  the head-to-head, 96 for the families, 102 where a budget was matched to training),
+  and `steps` is meaningless across different budgets.
+- **A success rate is per condition and per scenario class.** The same policy scores
+  96.9% on `medium/hard` under exact discovery and 0% under noisy discovery, and the
+  graph oracle scores 100% on a star and 12.5% on a ring. Neither number generalizes.
+- **Significance is paired by seed.** Every agent in a table saw the same seed list, so
+  the reported differences are paired; a difference against a number from another
+  section is not.
+
 ## Setup
 
 ```bash
@@ -181,8 +196,57 @@ Adding a `probed_hosts` observation channel and retraining at the same 400k budg
 
 The channel moves success off zero and raises reward, so it was a real defect worth
 fixing - but 6.2% against the oracle's 68.8% means **the gap is narrowed, not closed**.
-The observability fix was necessary and is not sufficient; the remaining distance is
-still exploration, and 400k steps does not cover it.
+The observability fix was necessary and is not sufficient.
+
+### Reshaping the reward toward pivoting made it worse
+
+The next hypothesis was that the reward itself misprices the work: `new_host` pays 1.0
+per discovered host, so probing is worth doing on its own, while pivoting - which
+actually advances the attack - pays the same. `pivot-focused` moves the mass across
+(discovery 0.2, pivot 2.5, failed probe -0.3). Retrained at 400k under noisy discovery:
+
+| Reward | Success | Steps | Behaviour |
+| --- | --- | --- | --- |
+| `risk-aware` + probe memory | **6.2%** | 18.3 | probes, then stops |
+| `pivot-focused` + probe memory | **0.0%** | 18.1 | probes three times, then stops at step 12 |
+
+It is worse, and the trace says why. **Pivoting requires an already-discovered host.**
+A probe lands on an adjacent host perhaps a quarter of the time, so 0.2 per success
+against -0.3 per miss is a net loss - the prerequisite became unprofitable, and the
+reward it leads to unreachable. Rewarding the goal of a two-step sequence while
+penalizing its precondition removes the sequence.
+
+Two hypotheses tested, one small gain and one regression, and the gap to the oracle's
+68.8% is still open. What the pair rules out is that this is a simple mispricing: a
+shaped reward has to make the *prerequisite* pay for itself, or training has to be long
+enough for the value function to carry the pivot reward back to the probe that earns it.
+400k steps does not.
+
+## Held-out structural families
+
+The generator emits one shape: a chain with difficulty-dependent shortcuts. `rlattack
+families` evaluates on topologies it cannot produce, imported through the same sanitized
+path as an external attack graph. 8 hosts, 16 shared seeds, noisy discovery.
+
+| Family | Edges | Diameter | Graph oracle | Greedy |
+| --- | --- | --- | --- | --- |
+| chain *(in distribution)* | 10 | 5 | 56.2% | 37.5% |
+| star *(held out)* | 7 | 2 | **100.0%** | 75.0% |
+| tree *(held out)* | 6 | 4 | 93.8% | 68.8% |
+| mesh *(held out)* | 18 | 2 | **100.0%** | 81.2% |
+| ring *(held out)* | 8 | 4 | **12.5%** | 12.5% |
+
+Structure dominates the result. A star puts every host one hop from the hub, so probing
+almost always lands; a ring has no natural entry and its shortest path wraps, so the
+oracle's route knowledge buys it nothing and it scores 12.5% - worse than it does on the
+shape it was designed for. Every difference against the chain reference is significant.
+
+Two consequences for reading any other number in this document: a single success rate on
+the generator's own shape says little about a policy's competence, and the gap between
+the oracle and a learned policy should be read per family rather than in aggregate.
+
+Every family is solvable under deterministic dynamics, which a test asserts, so a low
+score is the agent's and not the topology's.
 
 ## Robustness to the experimental conditions
 
@@ -208,6 +272,44 @@ baseline, not an achievement of it.
 
 This is the sharpest limitation in this document: **the published policies are only
 valid under the conditions they trained on.**
+
+## Training against a learning defender did not help
+
+Roadmap item 52 asked whether a policy trained against a defender that learns
+alongside it transfers better than one trained against a fixed condition. Two
+MaskablePPO policies, identical except for that one flag:
+
+- `mppo-adv` — 400k steps, staged curriculum, `--adversarial` (a `ContextualDefender`
+  learns during training), exact discovery.
+- `mppo-control` — the same 400k staged curriculum against the passive defender.
+
+Both were then evaluated on the same condition grid: `medium/hard`, 32 shared seeds,
+`--step-budget 102`, curriculum observations. Rewards are paired by seed; positive
+`diff` favours the adversarially trained policy.
+
+| Condition | adv reward | control reward | diff | 95% CI | p | success adv / control |
+| --- | --- | --- | --- | --- | --- | --- |
+| passive / exact | 24.32 | 26.82 | −2.50 | [−5.26, −0.21] | 0.069 | 84.4% / 96.9% |
+| adaptive / exact | 24.20 | 26.07 | −1.87 | [−4.77, +0.66] | 0.188 | 84.4% / 93.8% |
+| passive / noisy | −11.39 | −11.90 | +0.50 | [−2.02, +3.03] | 0.709 | 6.2% / 0.0% |
+| adaptive / noisy | −11.61 | −11.90 | +0.28 | [−2.22, +2.78] | 0.831 | 6.2% / 0.0% |
+
+**The answer is no.** No condition favours adversarial training significantly. The two
+exact conditions trend *against* it, and the apparent edge under noisy discovery is
+2 episodes out of 32 versus 0 — well inside noise (p ≈ 0.71) — bought at a 15.6%
+detection rate where the control policy is detected 0% of the time.
+
+The reason is visible inside each policy's own grid: the defender axis is nearly inert.
+Comparing `adaptive/exact` against `passive/exact` *within* a policy is insignificant
+for both (adv p = 0.515, control p = 0.228). Training against a learning defender cannot
+build robustness to pressure that is not there, so the only thing the adversarial run
+bought was a training distribution slightly further from the evaluation one.
+
+This is the same root cause as item 53's missing mixed equilibrium: detection risk is a
+single scalar that penalizes all activity uniformly, so the defender has no lever that
+some attacker strategies feel more than others. Item 55 — targeted per-host defender
+attention — is the prerequisite for both, and neither question is worth re-running
+before it lands.
 
 ## Reproducing
 

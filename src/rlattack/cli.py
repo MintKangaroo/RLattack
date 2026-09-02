@@ -39,6 +39,14 @@ from rlattack.experiment import (
     run_reward_ablation,
 )
 from rlattack.export import write_results
+from rlattack.families import (
+    HELD_OUT_FAMILIES,
+    FamilyShape,
+    evaluate_families,
+)
+from rlattack.families import (
+    build_scenario as build_family_scenario,
+)
 from rlattack.game import BanditAttacker, play
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.importers import import_scenario_file
@@ -63,12 +71,12 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--agent",
-        choices=("random", "greedy", "rule-based", "shortest-path"),
+        choices=("random", "greedy", "rule-based", "shortest-path", "shortest-path-broad"),
         default="greedy",
     )
     parser.add_argument(
         "--reward",
-        choices=("sparse", "shaped", "risk-aware", "cost-aware"),
+        choices=("sparse", "shaped", "risk-aware", "cost-aware", "pivot-focused"),
         default="risk-aware",
     )
     parser.add_argument("--step-budget", type=int, default=64)
@@ -211,7 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
     ablation.add_argument(
         "--strategies",
         nargs="+",
-        choices=("sparse", "shaped", "risk-aware", "cost-aware"),
+        choices=("sparse", "shaped", "risk-aware", "cost-aware", "pivot-focused"),
         default=list(REWARD_STRATEGIES),
     )
     ablation.add_argument("--output", type=Path, default=Path("artifacts/ablation.jsonl"))
@@ -259,7 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     game = commands.add_parser(
         "game",
-        help="play a fixed attacker against a defender that adapts between episodes",
+        help="play an attacker against a defender that adapts between episodes",
     )
     _add_experiment_arguments(game)
     game.add_argument(
@@ -285,6 +293,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     game.add_argument("--exploration", type=float, default=0.15)
     game.add_argument("--output", type=Path, default=Path("artifacts/game.jsonl"))
+
+    families = commands.add_parser(
+        "families",
+        help="evaluate one policy on structural families the generator cannot produce",
+    )
+    _add_experiment_arguments(families)
+    families.add_argument(
+        "--policy",
+        type=Path,
+        help="optional local Stable-Baselines3 checkpoint; defaults to the --agent baseline",
+    )
+    families.add_argument(
+        "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
+    )
+    families.add_argument("--hosts", type=int, default=8)
+    families.add_argument("--output", type=Path, default=Path("artifacts/families.jsonl"))
+    families.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    _add_significance_arguments(families, default_reference="chain")
 
     equilibrium = commands.add_parser(
         "equilibrium",
@@ -340,7 +366,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train.add_argument(
         "--reward",
-        choices=("sparse", "shaped", "risk-aware", "cost-aware"),
+        choices=("sparse", "shaped", "risk-aware", "cost-aware", "pivot-focused"),
         default="risk-aware",
         help="reward strategy to train against",
     )
@@ -679,6 +705,53 @@ def _run_game(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_families(args: argparse.Namespace) -> int:
+    """Evaluate one policy on the held-out structural families."""
+
+    config = _config_from_args(args)
+    if args.policy is not None:
+        policy = load_policy(args.policy, cast(Algorithm, args.policy_algorithm))
+        label = str(args.policy_algorithm)
+
+        def agent_factory(family: str, seed: int) -> Agent:
+            del family, seed
+            return policy
+    else:
+        label = config.agent
+
+        def agent_factory(family: str, seed: int) -> Agent:
+            return create_agent(
+                config.agent, build_family_scenario(family, args.hosts, seed), seed=seed
+            )
+
+    metrics = evaluate_families(
+        agent_factory,
+        benchmark_seeds(config),
+        hosts=args.hosts,
+        step_budget=config.step_budget,
+        reward_strategy=config.reward_strategy,
+        dynamics=config.dynamics(),
+        defender=config.defender_config(),
+    )
+    output = write_results(metrics, args.output, args.format)
+    print("RLAttack structural family evaluation")
+    print(f"  policy    : {label}")
+    print(f"  topology  : {args.hosts} hosts x {config.benchmark_episodes} seeds")
+    print(f"  discovery : {config.discovery}")
+    for name, metric in metrics.items():
+        shape = FamilyShape.measure(name, args.hosts, config.seed)
+        held_out = " (held out)" if name in HELD_OUT_FAMILIES else ""
+        print(
+            f"  {name:<6} success={metric.success_rate:5.1%} "
+            f"detected={metric.detection_rate:5.1%} "
+            f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
+            f"edges={shape.edges:3} diameter={shape.diameter}{held_out}"
+        )
+    _print_comparisons(metrics, args)
+    print(f"  export    : {output}")
+    return 0
+
+
 def _run_equilibrium(args: argparse.Namespace) -> int:
     """Solve the attacker x defender policy grid and report the mixtures."""
 
@@ -830,6 +903,63 @@ def _run_training(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_dashboard(args: argparse.Namespace) -> int:
+    """Serve the loopback-only dashboard."""
+
+    print(f"RLAttack dashboard: http://{args.host}:{args.port}")
+    run_dashboard(host=args.host, port=args.port)
+    return 0
+
+
+def _run_import(args: argparse.Namespace) -> int:
+    """Convert a published attack graph into a sanitized scenario file."""
+
+    imported = import_scenario_file(
+        args.input,
+        scenario_id=args.scenario_id,
+        synthesize_layers=not args.topology_only,
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(imported.model_dump_json(indent=2), encoding="utf-8")
+    print("RLAttack scenario import")
+    print(f"  source    : {args.input}")
+    print(f"  hosts     : {len(imported.hosts)}  edges: {len(imported.network_edges)}")
+    print(f"  entry     : {imported.entry_host_ids[0]}")
+    print(f"  scenario  : {args.output.resolve()}")
+    return 0
+
+
+def _run_scenario(args: argparse.Namespace) -> int:
+    """Export one generated scenario as JSON."""
+
+    generated = generate_scenario(
+        cast(ScenarioSize, args.size),
+        cast(Difficulty, args.difficulty),
+        args.seed,
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(generated.model_dump_json(indent=2), encoding="utf-8")
+    print(f"Scenario exported: {args.output.resolve()}")
+    return 0
+
+
+# Every subcommand except `demo`, which is the fall-through below.
+_COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "ablation": _run_ablation,
+    "benchmark": _run_benchmark,
+    "conditions": _run_conditions,
+    "dashboard": _run_dashboard,
+    "equilibrium": _run_equilibrium,
+    "families": _run_families,
+    "game": _run_game,
+    "import": _run_import,
+    "scenario": _run_scenario,
+    "sweep": _run_sweep,
+    "train": _run_training,
+    "transfer": _run_transfer,
+}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run a CLI command and return its process status."""
 
@@ -838,51 +968,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
-    if args.command == "dashboard":
-        print(f"RLAttack dashboard: http://{args.host}:{args.port}")
-        run_dashboard(host=args.host, port=args.port)
-        return 0
-    if args.command == "import":
-        imported = import_scenario_file(
-            args.input,
-            scenario_id=args.scenario_id,
-            synthesize_layers=not args.topology_only,
-        )
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(imported.model_dump_json(indent=2), encoding="utf-8")
-        print("RLAttack scenario import")
-        print(f"  source    : {args.input}")
-        print(f"  hosts     : {len(imported.hosts)}  edges: {len(imported.network_edges)}")
-        print(f"  entry     : {imported.entry_host_ids[0]}")
-        print(f"  scenario  : {args.output.resolve()}")
-        return 0
-    if args.command == "scenario":
-        generated = generate_scenario(
-            cast(ScenarioSize, args.size),
-            cast(Difficulty, args.difficulty),
-            args.seed,
-        )
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(generated.model_dump_json(indent=2), encoding="utf-8")
-        print(f"Scenario exported: {args.output.resolve()}")
-        return 0
-
-    if args.command == "benchmark":
-        return _run_benchmark(args)
-    if args.command == "ablation":
-        return _run_ablation(args)
-    if args.command == "transfer":
-        return _run_transfer(args)
-    if args.command == "conditions":
-        return _run_conditions(args)
-    if args.command == "game":
-        return _run_game(args)
-    if args.command == "sweep":
-        return _run_sweep(args)
-    if args.command == "equilibrium":
-        return _run_equilibrium(args)
-    if args.command == "train":
-        return _run_training(args)
+    handler = _COMMANDS.get(args.command)
+    if handler is not None:
+        return handler(args)
 
     config = _config_from_args(args)
     data = build_dashboard_data(config)

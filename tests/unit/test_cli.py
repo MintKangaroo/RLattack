@@ -114,8 +114,14 @@ def test_cli_benchmark_exports_episode_records(
     )
     rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
 
-    assert len(rows) == 12
-    assert {row["agent"] for row in rows} == {"random", "greedy", "rule-based", "shortest-path"}
+    assert len(rows) == 15
+    assert {row["agent"] for row in rows} == {
+        "random",
+        "greedy",
+        "rule-based",
+        "shortest-path",
+        "shortest-path-broad",
+    }
     assert "generalization benchmark" in capsys.readouterr().out
 
 
@@ -901,8 +907,8 @@ def test_cli_equilibrium_solves_the_policy_grid(
 
     assert "attacker x defender equilibrium" in printed
     assert "value     :" in printed
-    assert len(solved["payoffs"]) == 4
-    assert len(solved["payoffs"][0]) == 5
+    assert len(solved["payoffs"]) == 5
+    assert len(solved["payoffs"][0]) == 7
     assert sum(solved["attacker_mixture"]) == pytest.approx(1.0)
 
 
@@ -940,3 +946,78 @@ def test_cli_adversarial_training_attaches_a_learning_defender(
     )
     assert policies[0] is not None
     assert "adversarial/exact" in capsys.readouterr().out
+
+
+def test_cli_families_evaluates_the_held_out_topologies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "families.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "families",
+                "--agent",
+                "greedy",
+                "--episodes",
+                "3",
+                "--hosts",
+                "6",
+                "--deterministic",
+                "--resamples",
+                "100",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert "structural family evaluation" in printed
+    assert "(held out)" in printed
+    assert {row["agent"] for row in rows} == {"chain", "star", "tree", "mesh", "ring"}
+
+
+def test_cli_families_accepts_a_trained_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class StubAgent:
+        def predict(self, observation: object, info: dict[str, object]) -> np.int64:
+            return np.int64(int(Action.STOP) * int(cast(int, info["target_count"])))
+
+    monkeypatch.setattr(cli, "load_policy", lambda path, algorithm: StubAgent())
+
+    assert (
+        cli.main(
+            [
+                "families",
+                "--episodes",
+                "2",
+                "--hosts",
+                "5",
+                "--resamples",
+                "100",
+                "--policy",
+                str(tmp_path / "model.zip"),
+                "--output",
+                str(tmp_path / "f.jsonl"),
+            ]
+        )
+        == 0
+    )
+
+    assert "policy    : maskable-ppo" in capsys.readouterr().out
+
+
+def test_every_subcommand_has_a_handler() -> None:
+    """A new subcommand without a handler would fall through to `demo` silently."""
+
+    parser = cli.build_parser()
+    subparsers = parser._subparsers
+    assert subparsers is not None
+    declared = set(cast(Any, subparsers._group_actions[0]).choices)
+    handled = set(cli._COMMANDS) | {"demo"}
+
+    assert declared == handled
