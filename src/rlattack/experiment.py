@@ -384,6 +384,22 @@ def run_reward_ablation(
     }
 
 
+def monitored_hosts(scenario: Scenario, config: ExperimentConfig) -> tuple[str, ...]:
+    """Return the hosts a targeted defender starts the episode watching.
+
+    Empty for every other defender: uniform monitoring has no hosts to name, and
+    reporting all of them would read as attention where there is none.
+    """
+
+    return AttackPathEnv(
+        scenario,
+        step_budget=config.step_budget,
+        dynamics=config.dynamics(),
+        observation_config=config.observation_config(),
+        defender=config.defender_config(),
+    ).monitored_hosts()
+
+
 def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, Any]:
     """Build the deterministic view model consumed by HTML and JSON clients."""
 
@@ -412,6 +428,7 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
     visited = set(episode.visited_nodes)
     entry_hosts = set(scenario.entry_host_ids)
     objective_hosts = {objective.host_id for objective in scenario.objectives}
+    monitored = monitored_hosts(scenario, selected)
     host_nodes = [
         {
             "id": host.id,
@@ -430,6 +447,7 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
             "visited": host.id in visited,
             "entry": host.id in entry_hosts,
             "objective": host.id in objective_hosts,
+            "monitored": host.id in monitored,
         }
         for host in scenario.hosts
     ]

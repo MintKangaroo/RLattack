@@ -151,6 +151,9 @@ _HTML_START = """<!doctype html>
     .node-icon { fill:#091310; stroke:#42665a }
     .node.visited .node-icon { fill:#56f39a; stroke:#56f39a }
     .node.objective .node-icon { fill:#ffcb66; stroke:#ffcb66 }
+    .node.monitored .node-card { stroke:#ff6e6e; stroke-dasharray:5 3 }
+    .watch circle { fill:#ff6e6e22; stroke:#ff6e6e; stroke-width:1.2 }
+    .watch-mark { fill:#ff6e6e; font-size:9px; text-anchor:middle }
     .episode { display:flex; flex-direction:column }
     .outcome {
       padding:20px; border-radius:14px; margin:2px 0 16px;
@@ -237,8 +240,9 @@ _HTML_START = """<!doctype html>
       <div class="field"><label for="reward">Reward</label><select id="reward"><option value="shaped">Shaped</option><option value="risk-aware">Risk-aware</option><option value="cost-aware">Cost-aware</option><option value="sparse">Sparse</option></select></div>
       <div class="field"><label for="seed">Seed</label><input id="seed" type="number" min="0" step="1"></div>
       <div class="field"><label for="budget">Step budget</label><input id="budget" type="number" min="1" max="500"></div>
-      <div class="field"><label for="defender">Defender</label><select id="defender"><option value="passive">Passive (control)</option><option value="adaptive">Adaptive</option></select></div>
+      <div class="field"><label for="defender">Defender</label><select id="defender"><option value="passive">Passive (control)</option><option value="adaptive">Adaptive (uniform)</option><option value="targeted">Targeted attention</option></select></div>
       <div class="field"><label for="discovery">Discovery</label><select id="discovery"><option value="exact">Exact adjacency</option><option value="noisy">Noisy scan</option></select></div>
+      <div class="field"><label for="threshold">Detection threshold</label><input id="threshold" type="number" min="0.05" max="1" step="0.05" title="Accumulated risk that ends an episode. At 0.9 detection rarely fires, so risk is not the binding constraint."></div>
       <button class="run" id="run" type="submit">Run experiment ↗</button>
     </form>
     <div class="notice" id="notice"></div>
@@ -257,7 +261,7 @@ _HTML_START = """<!doctype html>
       <article class="panel">
         <div class="panel-head">
           <div><h2>Scenario topology</h2><div class="sub" id="scenario-sub"></div></div>
-          <span class="tag">Oracle route · dashed</span>
+          <span class="tag" id="graph-tag">Oracle route · dashed</span>
         </div>
         <svg id="graph" role="img" aria-label="Simulated scenario graph"></svg>
       </article>
@@ -303,6 +307,7 @@ _HTML_END = """
       $('size').value=c.size; $('difficulty').value=c.difficulty; $('agent').value=c.agent;
       $('reward').value=c.reward_strategy; $('seed').value=c.seed; $('budget').value=c.step_budget;
       $('defender').value=c.defender; $('discovery').value=c.discovery;
+      $('threshold').value=c.detection_threshold;
     }
 
     function renderGraph(data) {
@@ -324,18 +329,28 @@ _HTML_END = """
         return `<g><path class="edge ${edge.route?'route':''}" d="${path}" fill="none"/><text class="edge-label" x="${lx}" y="${ly}">${esc(edge.cost)}</text></g>`;
       }).join('');
       const nodeSvg=nodes.map(node => {
-        const p=positions[node.id], classes=`node ${node.visited?'visited':''} ${node.objective?'objective':''}`;
+        const p=positions[node.id], classes=`node ${node.visited?'visited':''} ${node.objective?'objective':''} ${node.monitored?'monitored':''}`;
         const role=node.entry?'ENTRY':node.objective?'OBJECTIVE':node.visited?'OBSERVED':'UNKNOWN';
+        // A targeted defender is only legible if you can see where it is looking, so
+        // the watched hosts are marked on the graph rather than only counted.
+        const watch=node.monitored
+          ? `<g class="watch" transform="translate(158 16)"><circle r="7"/><text class="watch-mark" x="0" y="4">◉</text></g>`
+          : '';
         return `<g class="${classes}" transform="translate(${p.x} ${p.y})">
           <rect class="node-card" width="176" height="78" rx="12"/>
           <circle class="node-icon" cx="24" cy="25" r="7"/>
           <text class="node-title" x="40" y="29">${esc(node.label)}</text>
           <text class="node-meta" x="16" y="54">${esc(node.os.toUpperCase())} · ${esc(node.services)} SERVICES</text>
           <text class="node-meta" x="16" y="68">${role} · RISK ${esc(node.detection)}</text>
+          ${watch}
         </g>`;
       }).join('');
       svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
       svg.innerHTML=edgeSvg+nodeSvg;
+      const watched=nodes.filter(n=>n.monitored).length;
+      $('graph-tag').textContent=watched
+        ? `Oracle route · dashed  ·  ◉ ${watched} watched`
+        : 'Oracle route · dashed';
     }
 
     function render(data) {
@@ -348,13 +363,17 @@ _HTML_END = """
       $('stat-risk').textContent=pct(e.detection_risk);
       $('stat-cost').textContent=num(e.path_cost,1);
       $('stat-defender').textContent=c.defender==='passive'?'—':String(e.defender_actions);
+      const watched=data.scenario.nodes.filter(n=>n.monitored).map(n=>n.label);
       $('stat-defender-note').textContent=c.defender==='passive'
         ? 'passive control condition'
-        : `${e.revoked_credentials} credential${e.revoked_credentials===1?'':'s'} revoked`;
+        : watched.length
+          ? `watching ${watched.join(', ')} · ${e.revoked_credentials} credential${e.revoked_credentials===1?'':'s'} revoked`
+          : `${e.revoked_credentials} credential${e.revoked_credentials===1?'':'s'} revoked`;
       const conditions=[
         ['Dynamics', c.stochastic?'Stochastic':'Deterministic', c.stochastic],
-        ['Defender', c.defender==='adaptive'?'Adaptive':'Passive', c.defender==='adaptive'],
+        ['Defender', {passive:'Passive',adaptive:'Adaptive (uniform)',targeted:'Targeted attention'}[c.defender], c.defender!=='passive'],
         ['Discovery', c.discovery==='noisy'?'Noisy scan':'Exact adjacency', c.discovery==='noisy'],
+        ['Detection', `threshold ${c.detection_threshold}`, c.detection_threshold<0.9],
         ['Observation', c.observation==='curriculum'?'Fixed capacity':'Scenario sized', c.observation==='curriculum'],
         ['Benchmark', data.benchmark_protocol.mode, false],
       ];
@@ -392,6 +411,7 @@ _HTML_END = """
         size:$('size').value,difficulty:$('difficulty').value,agent:$('agent').value,
         reward_strategy:$('reward').value,seed:$('seed').value,step_budget:$('budget').value,
         defender:$('defender').value,discovery:$('discovery').value,
+        detection_threshold:$('threshold').value,
         benchmark_episodes:model.config.benchmark_episodes
       });
       try {

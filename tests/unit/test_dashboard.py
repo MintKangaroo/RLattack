@@ -54,3 +54,54 @@ def test_dashboard_runner_passes_loopback_configuration(monkeypatch: pytest.Monk
 
     assert calls[0]["host"] == "localhost"
     assert calls[0]["port"] == 8123
+
+
+def test_dashboard_exposes_the_targeted_defender_conditions() -> None:
+    """A condition the dashboard cannot select is a condition it cannot show."""
+
+    client = TestClient(create_app())
+
+    targeted = client.get(
+        "/api/experiment",
+        params={
+            "size": "small",
+            "difficulty": "easy",
+            "agent": "greedy",
+            "benchmark_episodes": 1,
+            "defender": "targeted",
+            "detection_threshold": 0.4,
+        },
+    )
+
+    assert targeted.status_code == 200
+    data = targeted.json()
+
+    assert data["config"]["detection_threshold"] == 0.4
+    assert data["config"]["defender"] == "targeted"
+    watched = [node["id"] for node in data["scenario"]["nodes"] if node["monitored"]]
+    assert watched, "a targeted defender must report which hosts it is watching"
+
+    # Uniform monitoring has no hosts to name, so none are marked.
+    passive = client.get(
+        "/api/experiment",
+        params={
+            "size": "small",
+            "difficulty": "easy",
+            "agent": "greedy",
+            "benchmark_episodes": 1,
+        },
+    )
+
+    assert not any(node["monitored"] for node in passive.json()["scenario"]["nodes"])
+
+    rejected = client.get("/api/experiment", params={"detection_threshold": 0.0})
+
+    assert rejected.status_code == 422
+
+
+def test_dashboard_controls_cover_the_v1_conditions() -> None:
+    home = TestClient(create_app()).get("/").text
+
+    assert '<option value="targeted">' in home
+    assert 'id="threshold"' in home
+    assert "detection_threshold:$('threshold').value" in home
