@@ -105,3 +105,51 @@ def test_dashboard_controls_cover_the_v1_conditions() -> None:
     assert '<option value="targeted">' in home
     assert 'id="threshold"' in home
     assert "detection_threshold:$('threshold').value" in home
+
+
+def test_dashboard_selects_an_attack_target_inside_the_synthetic_graph() -> None:
+    """The target names an objective in the graph, never an external address."""
+
+    client = TestClient(create_app())
+
+    full = client.get(
+        "/api/experiment",
+        params={"size": "medium", "difficulty": "hard", "agent": "greedy", "benchmark_episodes": 1},
+    ).json()
+    available = full["target"]["available"]
+
+    assert full["target"]["selected"] == ""
+    assert not any(node["target"] for node in full["scenario"]["nodes"])
+    assert len(available) > 1, "a hard medium scenario has more than one objective"
+
+    chosen = available[-1]
+    focused = client.get(
+        "/api/experiment",
+        params={
+            "size": "medium",
+            "difficulty": "hard",
+            "agent": "greedy",
+            "benchmark_episodes": 1,
+            "target": chosen["id"],
+        },
+    ).json()
+
+    marked = [node["id"] for node in focused["scenario"]["nodes"] if node["target"]]
+    objectives = [node["id"] for node in focused["scenario"]["nodes"] if node["objective"]]
+
+    assert focused["target"]["selected"] == chosen["id"]
+    assert marked == [chosen["host"]]
+    # The win condition narrowed to the one target, so only it counts as an objective.
+    assert objectives == [chosen["host"]]
+
+    rejected = client.get("/api/experiment", params={"target": "objective-not-real"})
+
+    assert rejected.status_code == 422
+
+
+def test_dashboard_controls_include_the_attack_target_selector() -> None:
+    home = TestClient(create_app()).get("/").text
+
+    assert 'id="target"' in home
+    assert "Attack target" in home
+    assert "target:$('target').value" in home

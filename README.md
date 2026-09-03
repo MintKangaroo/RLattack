@@ -100,12 +100,15 @@ make dashboard
 - Defender: `passive`(대조군), `adaptive`(균일 감시), `targeted`(표적 주의)
 - Discovery: `exact`, `noisy`
 - Detection threshold: episode를 끝내는 누적 risk (기본 0.9)
+- Attack target: episode가 노릴 objective를 시나리오 안에서 선택 (기본은 전체 objective)
 - Seed와 step budget
 
 화면은 host topology와 oracle route, episode outcome, cumulative reward, detection risk,
 graph path cost, baseline success rate, 전체 decision trace를 함께 보여줍니다. Targeted
 defender를 고르면 **감시 중인 host가 graph 위에 ◉ 표시**로 나타나고, defender 통계에
-어느 host를 보고 있는지 이름이 적힙니다. `Export JSON`으로
+어느 host를 보고 있는지 이름이 적힙니다. Attack target을 고르면 win condition이 그
+objective 하나로 좁혀지고 대상 host가 graph에 ⌖로 강조됩니다. **대상은 언제나 합성
+그래프 안의 objective이며, 외부 주소를 입력받는 칸은 없습니다**(안전 경계). `Export JSON`으로
 현재 실험을 그대로 저장할 수도 있습니다.
 
 <details>

@@ -152,6 +152,8 @@ _HTML_START = """<!doctype html>
     .node.visited .node-icon { fill:#56f39a; stroke:#56f39a }
     .node.objective .node-icon { fill:#ffcb66; stroke:#ffcb66 }
     .node.monitored .node-card { stroke:#ff6e6e; stroke-dasharray:5 3 }
+    .node.target .node-card { stroke:#4ee894; stroke-width:2.5 }
+    .node.target .node-icon { fill:#4ee894; stroke:#4ee894 }
     .watch circle { fill:#ff6e6e22; stroke:#ff6e6e; stroke-width:1.2 }
     .watch-mark { fill:#ff6e6e; font-size:9px; text-anchor:middle }
     .episode { display:flex; flex-direction:column }
@@ -243,6 +245,7 @@ _HTML_START = """<!doctype html>
       <div class="field"><label for="defender">Defender</label><select id="defender"><option value="passive">Passive (control)</option><option value="adaptive">Adaptive (uniform)</option><option value="targeted">Targeted attention</option></select></div>
       <div class="field"><label for="discovery">Discovery</label><select id="discovery"><option value="exact">Exact adjacency</option><option value="noisy">Noisy scan</option></select></div>
       <div class="field"><label for="threshold">Detection threshold</label><input id="threshold" type="number" min="0.05" max="1" step="0.05" title="Accumulated risk that ends an episode. At 0.9 detection rarely fires, so risk is not the binding constraint."></div>
+      <div class="field"><label for="target">Attack target</label><select id="target" title="Which objective in the synthetic graph the episode must reach. Simulation only — no external address."><option value="">All objectives</option></select></div>
       <button class="run" id="run" type="submit">Run experiment ↗</button>
     </form>
     <div class="notice" id="notice"></div>
@@ -308,6 +311,17 @@ _HTML_END = """
       $('reward').value=c.reward_strategy; $('seed').value=c.seed; $('budget').value=c.step_budget;
       $('defender').value=c.defender; $('discovery').value=c.discovery;
       $('threshold').value=c.detection_threshold;
+      syncTargets(data.target);
+    }
+
+    function syncTargets(target) {
+      const select=$('target');
+      const options=['<option value="">All objectives</option>'].concat(
+        (target.available||[]).map(t =>
+          `<option value="${esc(t.id)}">${esc(t.label)} · ${esc(t.privilege)}</option>`)
+      );
+      select.innerHTML=options.join('');
+      select.value=target.selected||'';
     }
 
     function renderGraph(data) {
@@ -329,8 +343,8 @@ _HTML_END = """
         return `<g><path class="edge ${edge.route?'route':''}" d="${path}" fill="none"/><text class="edge-label" x="${lx}" y="${ly}">${esc(edge.cost)}</text></g>`;
       }).join('');
       const nodeSvg=nodes.map(node => {
-        const p=positions[node.id], classes=`node ${node.visited?'visited':''} ${node.objective?'objective':''} ${node.monitored?'monitored':''}`;
-        const role=node.entry?'ENTRY':node.objective?'OBJECTIVE':node.visited?'OBSERVED':'UNKNOWN';
+        const p=positions[node.id], classes=`node ${node.visited?'visited':''} ${node.objective?'objective':''} ${node.monitored?'monitored':''} ${node.target?'target':''}`;
+        const role=node.entry?'ENTRY':node.target?'TARGET':node.objective?'OBJECTIVE':node.visited?'OBSERVED':'UNKNOWN';
         // A targeted defender is only legible if you can see where it is looking, so
         // the watched hosts are marked on the graph rather than only counted.
         const watch=node.monitored
@@ -348,9 +362,11 @@ _HTML_END = """
       svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
       svg.innerHTML=edgeSvg+nodeSvg;
       const watched=nodes.filter(n=>n.monitored).length;
-      $('graph-tag').textContent=watched
-        ? `Oracle route · dashed  ·  ◉ ${watched} watched`
-        : 'Oracle route · dashed';
+      const targetNode=nodes.find(n=>n.target);
+      let tag='Oracle route · dashed';
+      if(targetNode) tag+=`  ·  ⌖ target ${targetNode.label}`;
+      if(watched) tag+=`  ·  ◉ ${watched} watched`;
+      $('graph-tag').textContent=tag;
     }
 
     function render(data) {
@@ -411,7 +427,7 @@ _HTML_END = """
         size:$('size').value,difficulty:$('difficulty').value,agent:$('agent').value,
         reward_strategy:$('reward').value,seed:$('seed').value,step_budget:$('budget').value,
         defender:$('defender').value,discovery:$('discovery').value,
-        detection_threshold:$('threshold').value,
+        detection_threshold:$('threshold').value,target:$('target').value,
         benchmark_episodes:model.config.benchmark_episodes
       });
       try {
@@ -431,6 +447,9 @@ _HTML_END = """
       const link=document.createElement('a'); link.href=URL.createObjectURL(blob);
       link.download=`rlattack-${model.config.seed}.json`; link.click(); URL.revokeObjectURL(link.href);
     });
+    // The available objectives depend on the scenario, so a target chosen for one size
+    // may not exist in another. Reset it rather than submit a target the server rejects.
+    ['size','difficulty'].forEach(id => $(id).addEventListener('change', () => { $('target').value=''; }));
     render(model);
   </script>
 </body>

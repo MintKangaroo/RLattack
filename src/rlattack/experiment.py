@@ -299,20 +299,26 @@ def benchmark_seeds(config: ExperimentConfig) -> tuple[int, ...]:
 def run_benchmarks(
     config: ExperimentConfig,
     extra_agents: Mapping[str, Callable[[int], Agent]] | None = None,
+    scenario_transform: Callable[[Scenario], Scenario] | None = None,
 ) -> dict[str, BenchmarkMetrics]:
     """Benchmark every baseline over independently generated scenarios.
 
     Each seed regenerates the scenario, so the result is a generalization benchmark
     rather than a repeated replay of one fixed graph.
+
+    ``scenario_transform`` post-processes each generated scenario before it is used,
+    so a chosen target narrows every seed's win condition the same way and the baseline
+    table stays consistent with the single episode above it.
     """
 
     reward_config = build_reward_config(config.reward_strategy)
     dynamics = config.dynamics()
     observation_config = config.observation_config()
     defender = config.defender_config()
+    transform = scenario_transform or (lambda scenario: scenario)
 
     def scenario_for(seed: int) -> Scenario:
-        return generate_scenario(config.size, config.difficulty, seed)
+        return transform(generate_scenario(config.size, config.difficulty, seed))
 
     def env_factory(seed: int) -> AttackPathEnv:
         return AttackPathEnv(
@@ -400,11 +406,32 @@ def monitored_hosts(scenario: Scenario, config: ExperimentConfig) -> tuple[str, 
     ).monitored_hosts()
 
 
-def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, Any]:
-    """Build the deterministic view model consumed by HTML and JSON clients."""
+def build_dashboard_data(
+    config: ExperimentConfig | None = None, target: str = ""
+) -> dict[str, Any]:
+    """Build the deterministic view model consumed by HTML and JSON clients.
+
+    ``target`` is the id of the objective the episode should pursue. Empty means the
+    scenario's own full win condition. A target names an objective inside the synthetic
+    graph, never an external address: the dashboard has no field for one and this
+    function has no way to reach outside the in-memory scenario.
+    """
 
     selected = config or ExperimentConfig()
-    scenario = generate_scenario(selected.size, selected.difficulty, selected.seed)
+    full_scenario = generate_scenario(selected.size, selected.difficulty, selected.seed)
+    targets = [
+        {
+            "id": objective.id,
+            "host": objective.host_id,
+            "label": objective.host_id.replace("host-", "NODE "),
+            "privilege": objective.required_privilege_id or "any",
+        }
+        for objective in full_scenario.objectives
+    ]
+    if target and target not in {objective.id for objective in full_scenario.objectives}:
+        raise ValueError(f"unknown target objective: {target}")
+    transform = (lambda scenario: scenario.targeting([target])) if target else None
+    scenario = transform(full_scenario) if transform else full_scenario
     episode = run_episode(
         scenario,
         agent_name=selected.agent,
@@ -415,7 +442,7 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
         observation_config=selected.observation_config(),
         defender=selected.defender_config(),
     )
-    benchmarks = run_benchmarks(selected)
+    benchmarks = run_benchmarks(selected, scenario_transform=transform)
     metrics = [
         {
             **{key: value for key, value in asdict(metric).items() if key != "outcomes"},
@@ -448,6 +475,7 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
             "entry": host.id in entry_hosts,
             "objective": host.id in objective_hosts,
             "monitored": host.id in monitored,
+            "target": bool(target) and host.id in objective_hosts,
         }
         for host in scenario.hosts
     ]
@@ -465,6 +493,10 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
     return {
         "schema_version": "2.0",
         "config": asdict(selected),
+        "target": {
+            "selected": target,
+            "available": targets,
+        },
         "scenario": {
             "id": scenario.id,
             "name": scenario.name,
