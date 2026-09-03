@@ -14,7 +14,7 @@ def test_dashboard_html_embeds_safe_offline_data() -> None:
     assert "<!doctype html>" in html
     assert "window.__RLATTACK_API__=false" in html
     assert "\\u003c/script>" in html
-    assert "Run experiment" in html
+    assert "실험 실행" in html
 
 
 def test_dashboard_html_can_enable_api_and_write_report(tmp_path: Path) -> None:

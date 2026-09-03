@@ -24,7 +24,7 @@
 
 ---
 
-<img src="docs/assets/dashboard-overview.png" alt="RLAttack Simulation Observatory overview">
+<img src="docs/assets/dashboard-overview.png" alt="RLAttack 시뮬레이션 관측소 개요">
 
 > 위 화면의 topology, reward, risk, benchmark, decision trace는 장식용 샘플이 아닙니다.
 > `rlattack demo --agent shortest-path --defender adaptive --seed 42` 실행 화면입니다.
@@ -116,7 +116,7 @@ objective 하나로 좁혀지고 대상 host가 graph에 ⌖로 강조됩니다.
 <br>
 <picture>
   <source media="(max-width: 700px)" srcset="docs/assets/dashboard-mobile.png">
-  <img src="docs/assets/dashboard.png" alt="RLAttack 전체 dashboard와 mobile layout">
+  <img src="docs/assets/dashboard.png" alt="RLAttack v1.0 한국어 대시보드 (데스크톱·모바일)">
 </picture>
 </details>
 

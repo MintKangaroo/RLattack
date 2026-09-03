@@ -11,7 +11,7 @@ def test_dashboard_routes_render_and_run_experiments() -> None:
 
     home = client.get("/")
     assert home.status_code == 200
-    assert "Simulation Observatory" in home.text
+    assert "시뮬레이션 관측소" in home.text
     assert "window.__RLATTACK_API__=true" in home.text
 
     health = client.get("/health")
@@ -151,5 +151,5 @@ def test_dashboard_controls_include_the_attack_target_selector() -> None:
     home = TestClient(create_app()).get("/").text
 
     assert 'id="target"' in home
-    assert "Attack target" in home
+    assert "공격 대상" in home
     assert "target:$('target').value" in home

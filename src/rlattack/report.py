@@ -48,12 +48,12 @@ def write_transfer_report(data: dict[str, Any], output_path: Path) -> Path:
 
 
 _HTML_START = """<!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>RLAttack · Simulation Observatory</title>
+  <title>RLAttack · 시뮬레이션 관측소</title>
   <style>
     :root {
       --bg:#07100e; --panel:#0c1815; --panel-2:#10201c; --line:#20352f;
@@ -89,7 +89,7 @@ _HTML_START = """<!doctype html>
     }
     .safe i { width:7px; height:7px; background:var(--green); border-radius:50%; box-shadow:0 0 12px var(--green) }
     .hero { display:grid; grid-template-columns:1.4fr .6fr; align-items:end; gap:30px; margin-bottom:30px }
-    .eyebrow { color:var(--green); font-size:11px; font-weight:800; letter-spacing:.2em; text-transform:uppercase }
+    .eyebrow { color:var(--green); font-size:11px; font-weight:800; letter-spacing:.08em }
     h1 { max-width:850px; margin:13px 0 16px; font-size:clamp(42px,5vw,76px); line-height:.98; letter-spacing:-.07em; font-weight:720 }
     h1 em { color:var(--green); font-style:normal }
     .lede { max-width:720px; color:#a9bbb5; font-size:16px; line-height:1.7 }
@@ -126,6 +126,8 @@ _HTML_START = """<!doctype html>
     .run:hover { transform:translateY(-1px); background:#79ffb4 }
     .run:disabled { cursor:wait; opacity:.6 }
     .notice { min-height:22px; color:var(--muted); font-size:11px; padding:0 4px }
+    .howto { color:#8fb4a8; font-size:12px; line-height:1.6; padding:2px 4px 0; margin-bottom:2px }
+    .howto b { color:#cfe7dd }
     .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:12px 0 14px }
     .stat,.panel { border:1px solid var(--line); background:linear-gradient(145deg,#0d1916ee,#091310ee); border-radius:18px }
     .stat { padding:20px 22px; min-height:120px; position:relative; overflow:hidden }
@@ -217,45 +219,46 @@ _HTML_START = """<!doctype html>
         <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9Z" stroke="#56f39a" stroke-width="1.6"/><path d="m8 10 4-2 4 2v4l-4 2-4-2v-4Z" fill="#56f39a"/></svg></span>
         <span>RLAttack</span>
       </div>
-      <div class="safe"><i></i> SIMULATION-ONLY · NO EXTERNAL TARGETS</div>
+      <div class="safe"><i></i> 시뮬레이션 전용 · 외부 대상 없음</div>
     </nav>
 
     <section class="hero">
       <div>
-        <div class="eyebrow">Reinforcement-learning security observatory</div>
-        <h1>See every decision.<br><em>Trust every run.</em></h1>
-        <div class="lede">Explore deterministic attack-path policies inside a synthetic graph.
-          Compare baselines, inspect rewards, and follow the exact trajectory—without touching a live system.</div>
+        <div class="eyebrow">강화학습 보안 관측소</div>
+        <h1>모든 결정을 본다.<br><em>모든 실행을 믿는다.</em></h1>
+        <div class="lede">합성 그래프 안에서 공격 경로 정책을 실제 시스템을 건드리지 않고 탐구합니다.
+          기준 정책과 비교하고, 보상을 살펴보고, 정확한 경로를 따라가 보세요.</div>
       </div>
       <div class="hero-meta">
-        <div><span>Runtime</span><strong>Gymnasium MDP</strong></div>
-        <div><span>Execution</span><strong>In-process only</strong></div>
-        <div><span>Graph model</span><strong>Pydantic + NetworkX</strong></div>
-        <div><span>Reproducibility</span><strong>Seed locked</strong></div>
+        <div><span>런타임</span><strong>Gymnasium MDP</strong></div>
+        <div><span>실행 범위</span><strong>프로세스 내부만</strong></div>
+        <div><span>그래프 모델</span><strong>Pydantic + NetworkX</strong></div>
+        <div><span>재현성</span><strong>Seed 고정</strong></div>
       </div>
     </section>
 
     <form class="toolbar" id="controls">
-      <div class="field"><label for="size">Scenario size</label><select id="size"><option>small</option><option>medium</option><option>large</option></select></div>
-      <div class="field"><label for="difficulty">Difficulty</label><select id="difficulty"><option>easy</option><option>medium</option><option>hard</option></select></div>
-      <div class="field"><label for="agent">Policy</label><select id="agent"><option value="greedy">Greedy</option><option value="rule-based">Rule-based</option><option value="shortest-path">Graph oracle</option><option value="random">Random</option></select></div>
-      <div class="field"><label for="reward">Reward</label><select id="reward"><option value="shaped">Shaped</option><option value="risk-aware">Risk-aware</option><option value="cost-aware">Cost-aware</option><option value="sparse">Sparse</option></select></div>
+      <div class="field"><label for="size">시나리오 크기</label><select id="size"><option value="small">소형</option><option value="medium">중형</option><option value="large">대형</option></select></div>
+      <div class="field"><label for="difficulty">난이도</label><select id="difficulty"><option value="easy">쉬움</option><option value="medium">보통</option><option value="hard">어려움</option></select></div>
+      <div class="field"><label for="agent">정책</label><select id="agent"><option value="greedy">Greedy(탐욕)</option><option value="rule-based">규칙 기반</option><option value="shortest-path">그래프 오라클</option><option value="random">무작위</option></select></div>
+      <div class="field"><label for="reward">보상</label><select id="reward"><option value="shaped">단계 보상</option><option value="risk-aware">위험 인지</option><option value="cost-aware">비용 인지</option><option value="sparse">희소</option></select></div>
       <div class="field"><label for="seed">Seed</label><input id="seed" type="number" min="0" step="1"></div>
-      <div class="field"><label for="budget">Step budget</label><input id="budget" type="number" min="1" max="500"></div>
-      <div class="field"><label for="defender">Defender</label><select id="defender"><option value="passive">Passive (control)</option><option value="adaptive">Adaptive (uniform)</option><option value="targeted">Targeted attention</option></select></div>
-      <div class="field"><label for="discovery">Discovery</label><select id="discovery"><option value="exact">Exact adjacency</option><option value="noisy">Noisy scan</option></select></div>
-      <div class="field"><label for="threshold">Detection threshold</label><input id="threshold" type="number" min="0.05" max="1" step="0.05" title="Accumulated risk that ends an episode. At 0.9 detection rarely fires, so risk is not the binding constraint."></div>
-      <div class="field"><label for="target">Attack target</label><select id="target" title="Which objective in the synthetic graph the episode must reach. Simulation only — no external address."><option value="">All objectives</option></select></div>
-      <button class="run" id="run" type="submit">Run experiment ↗</button>
+      <div class="field"><label for="budget">스텝 예산</label><input id="budget" type="number" min="1" max="500"></div>
+      <div class="field"><label for="defender">방어자</label><select id="defender"><option value="passive">비활성(대조군)</option><option value="adaptive">적응형(균일 감시)</option><option value="targeted">표적 주의</option></select></div>
+      <div class="field"><label for="discovery">탐색</label><select id="discovery"><option value="exact">정확한 인접</option><option value="noisy">노이즈 스캔</option></select></div>
+      <div class="field"><label for="threshold">탐지 임계값</label><input id="threshold" type="number" min="0.05" max="1" step="0.05" title="에피소드를 끝내는 누적 위험. 0.9에서는 탐지가 거의 발동하지 않아 위험이 구속조건이 되지 않습니다."></div>
+      <div class="field"><label for="target">공격 대상</label><select id="target" title="에피소드가 도달해야 할 그래프 안의 목표. 시뮬레이션 전용 — 외부 주소는 없습니다."><option value="">전체 목표</option></select></div>
+      <button class="run" id="run" type="submit">실험 실행 ↗</button>
     </form>
+    <div class="howto">조건을 고른 뒤 <b>실험 실행</b>을 누르면 같은 seed로 즉시 다시 계산됩니다. 아래에 에피소드 결과·그래프·기준 비교·결정 로그가 나타납니다.</div>
     <div class="notice" id="notice"></div>
 
     <section class="stats">
-      <article class="stat"><span class="k">Episode status</span><strong class="v" id="stat-status">—</strong><small id="stat-status-note"></small></article>
-      <article class="stat" style="--accent:#71a7ff"><span class="k">Cumulative reward</span><strong class="v" id="stat-reward">—</strong><small id="stat-reward-note"></small></article>
-      <article class="stat" style="--accent:#ffcb66"><span class="k">Detection risk</span><strong class="v" id="stat-risk">—</strong><small>normalized terminal risk</small></article>
-      <article class="stat" style="--accent:#c78bff"><span class="k">Graph path cost</span><strong class="v" id="stat-cost">—</strong><small>sum of traversed edge weights</small></article>
-      <article class="stat" style="--accent:#ff6e6e"><span class="k">Defender responses</span><strong class="v" id="stat-defender">—</strong><small id="stat-defender-note"></small></article>
+      <article class="stat"><span class="k">에피소드 상태</span><strong class="v" id="stat-status">—</strong><small id="stat-status-note"></small></article>
+      <article class="stat" style="--accent:#71a7ff"><span class="k">누적 보상</span><strong class="v" id="stat-reward">—</strong><small id="stat-reward-note"></small></article>
+      <article class="stat" style="--accent:#ffcb66"><span class="k">탐지 위험</span><strong class="v" id="stat-risk">—</strong><small>정규화된 종료 시점 위험</small></article>
+      <article class="stat" style="--accent:#c78bff"><span class="k">그래프 경로 비용</span><strong class="v" id="stat-cost">—</strong><small>지나간 엣지 가중치 합</small></article>
+      <article class="stat" style="--accent:#ff6e6e"><span class="k">방어자 대응</span><strong class="v" id="stat-defender">—</strong><small id="stat-defender-note"></small></article>
     </section>
 
     <section class="conditions" id="conditions"></section>
@@ -263,36 +266,36 @@ _HTML_START = """<!doctype html>
     <section class="main-grid">
       <article class="panel">
         <div class="panel-head">
-          <div><h2>Scenario topology</h2><div class="sub" id="scenario-sub"></div></div>
-          <span class="tag" id="graph-tag">Oracle route · dashed</span>
+          <div><h2>시나리오 토폴로지</h2><div class="sub" id="scenario-sub"></div></div>
+          <span class="tag" id="graph-tag">오라클 경로 · 점선</span>
         </div>
-        <svg id="graph" role="img" aria-label="Simulated scenario graph"></svg>
+        <svg id="graph" role="img" aria-label="시뮬레이션 시나리오 그래프"></svg>
       </article>
       <article class="panel episode">
-        <div class="panel-head"><div><h2>Episode briefing</h2><div class="sub">Observable, reproducible, explainable</div></div><span class="tag" id="agent-tag"></span></div>
+        <div class="panel-head"><div><h2>에피소드 브리핑</h2><div class="sub">관측 가능 · 재현 가능 · 설명 가능</div></div><span class="tag" id="agent-tag"></span></div>
         <div class="outcome" id="outcome"><span class="status" id="outcome-status"></span><strong id="outcome-title"></strong><p id="outcome-copy"></p></div>
-        <h2>Oracle route</h2>
-        <div class="sub">Shortest host-only route in the static graph</div>
+        <h2>오라클 경로</h2>
+        <div class="sub">정적 그래프에서의 호스트 최단 경로</div>
         <ol class="route" id="route"></ol>
       </article>
     </section>
 
     <section class="bottom-grid">
       <article class="panel">
-        <div class="panel-head"><div><h2>Baseline comparison</h2><div class="sub" id="benchmark-sub"></div></div><span class="tag">Generalization · per-seed graphs</span></div>
+        <div class="panel-head"><div><h2>기준 정책 비교</h2><div class="sub" id="benchmark-sub"></div></div><span class="tag">일반화 · seed별 그래프</span></div>
         <div id="benchmarks"></div>
-        <div class="legend"><span>BAR · SUCCESS RATE</span><span>LABEL · MEAN STEPS ± SD · DETECTION RATE</span></div>
+        <div class="legend"><span>막대 · 성공률</span><span>라벨 · 평균 스텝 ± 표준편차 · 탐지율</span></div>
       </article>
       <article class="panel">
         <div class="panel-head">
-          <div><h2>Decision trace</h2><div class="sub">Every action and immediate contribution</div></div>
-          <div class="panel-actions"><button class="ghost" id="export" type="button">Export JSON</button></div>
+          <div><h2>결정 로그</h2><div class="sub">모든 action과 즉시 기여</div></div>
+          <div class="panel-actions"><button class="ghost" id="export" type="button">JSON 내보내기</button></div>
         </div>
-        <div class="table-wrap"><table><thead><tr><th>Step</th><th>Action</th><th>Target</th><th>State</th><th>Risk</th><th>Reward</th><th>Outcome</th></tr></thead><tbody id="trace"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>스텝</th><th>Action</th><th>대상</th><th>상태</th><th>위험</th><th>보상</th><th>결과</th></tr></thead><tbody id="trace"></tbody></table></div>
       </article>
     </section>
 
-    <footer><span><strong>RLAttack</strong> · deterministic attack-path research</span><span>Local simulator · no scanners · no shells · no external network access</span></footer>
+    <footer><span><strong>RLAttack</strong> · 결정론적 공격 경로 연구</span><span>로컬 시뮬레이터 · 스캐너·셸·외부 네트워크 없음</span></footer>
   </main>
 """
 
@@ -301,6 +304,7 @@ _HTML_END = """
   <script>
     const $ = (id) => document.getElementById(id);
     let model = window.__RLATTACK_DATA__;
+    const REWARD_KO={shaped:'단계',"risk-aware":'위험 인지',"cost-aware":'비용 인지',sparse:'희소'};
     const esc = (value) => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const pct = (value) => `${(Number(value) * 100).toFixed(1)}%`;
     const num = (value, digits=2) => Number(value).toFixed(digits);
@@ -344,7 +348,7 @@ _HTML_END = """
       }).join('');
       const nodeSvg=nodes.map(node => {
         const p=positions[node.id], classes=`node ${node.visited?'visited':''} ${node.objective?'objective':''} ${node.monitored?'monitored':''} ${node.target?'target':''}`;
-        const role=node.entry?'ENTRY':node.target?'TARGET':node.objective?'OBJECTIVE':node.visited?'OBSERVED':'UNKNOWN';
+        const role=node.entry?'진입':node.target?'대상':node.objective?'목표':node.visited?'관측됨':'미상';
         // A targeted defender is only legible if you can see where it is looking, so
         // the watched hosts are marked on the graph rather than only counted.
         const watch=node.monitored
@@ -354,8 +358,8 @@ _HTML_END = """
           <rect class="node-card" width="176" height="78" rx="12"/>
           <circle class="node-icon" cx="24" cy="25" r="7"/>
           <text class="node-title" x="40" y="29">${esc(node.label)}</text>
-          <text class="node-meta" x="16" y="54">${esc(node.os.toUpperCase())} · ${esc(node.services)} SERVICES</text>
-          <text class="node-meta" x="16" y="68">${role} · RISK ${esc(node.detection)}</text>
+          <text class="node-meta" x="16" y="54">${esc(node.os.toUpperCase())} · 서비스 ${esc(node.services)}</text>
+          <text class="node-meta" x="16" y="68">${role} · 위험 ${esc(node.detection)}</text>
           ${watch}
         </g>`;
       }).join('');
@@ -363,52 +367,52 @@ _HTML_END = """
       svg.innerHTML=edgeSvg+nodeSvg;
       const watched=nodes.filter(n=>n.monitored).length;
       const targetNode=nodes.find(n=>n.target);
-      let tag='Oracle route · dashed';
-      if(targetNode) tag+=`  ·  ⌖ target ${targetNode.label}`;
-      if(watched) tag+=`  ·  ◉ ${watched} watched`;
+      let tag='오라클 경로 · 점선';
+      if(targetNode) tag+=`  ·  ⌖ 대상 ${targetNode.label}`;
+      if(watched) tag+=`  ·  ◉ ${watched}곳 감시`;
       $('graph-tag').textContent=tag;
     }
 
     function render(data) {
       model=data; syncControls(data);
       const e=data.episode, c=data.config, s=data.scenario;
-      $('stat-status').textContent=e.success?'SUCCESS':e.detected?'DETECTED':e.truncated?'BUDGET':'STOPPED';
-      $('stat-status-note').textContent=`${e.steps} / ${c.step_budget} steps · ${e.agent_label}`;
+      $('stat-status').textContent=e.success?'성공':e.detected?'탐지됨':e.truncated?'예산 소진':'중단';
+      $('stat-status-note').textContent=`${e.steps} / ${c.step_budget} 스텝 · ${e.agent_label}`;
       $('stat-reward').textContent=(e.cumulative_reward>=0?'+':'')+num(e.cumulative_reward);
-      $('stat-reward-note').textContent=`${c.reward_strategy} reward strategy`;
+      $('stat-reward-note').textContent=`${REWARD_KO[c.reward_strategy]||c.reward_strategy} 보상 전략`;
       $('stat-risk').textContent=pct(e.detection_risk);
       $('stat-cost').textContent=num(e.path_cost,1);
       $('stat-defender').textContent=c.defender==='passive'?'—':String(e.defender_actions);
       const watched=data.scenario.nodes.filter(n=>n.monitored).map(n=>n.label);
       $('stat-defender-note').textContent=c.defender==='passive'
-        ? 'passive control condition'
+        ? '비활성 대조군'
         : watched.length
-          ? `watching ${watched.join(', ')} · ${e.revoked_credentials} credential${e.revoked_credentials===1?'':'s'} revoked`
-          : `${e.revoked_credentials} credential${e.revoked_credentials===1?'':'s'} revoked`;
+          ? `${watched.join(', ')} 감시 · credential ${e.revoked_credentials}개 회수`
+          : `credential ${e.revoked_credentials}개 회수`;
       const conditions=[
-        ['Dynamics', c.stochastic?'Stochastic':'Deterministic', c.stochastic],
-        ['Defender', {passive:'Passive',adaptive:'Adaptive (uniform)',targeted:'Targeted attention'}[c.defender], c.defender!=='passive'],
-        ['Discovery', c.discovery==='noisy'?'Noisy scan':'Exact adjacency', c.discovery==='noisy'],
-        ['Detection', `threshold ${c.detection_threshold}`, c.detection_threshold<0.9],
-        ['Observation', c.observation==='curriculum'?'Fixed capacity':'Scenario sized', c.observation==='curriculum'],
-        ['Benchmark', data.benchmark_protocol.mode, false],
+        ['동역학', c.stochastic?'확률적':'결정론적', c.stochastic],
+        ['방어자', {passive:'비활성',adaptive:'적응형(균일)',targeted:'표적 주의'}[c.defender], c.defender!=='passive'],
+        ['탐색', c.discovery==='noisy'?'노이즈 스캔':'정확한 인접', c.discovery==='noisy'],
+        ['탐지', `임계값 ${c.detection_threshold}`, c.detection_threshold<0.9],
+        ['관측', c.observation==='curriculum'?'고정 용량':'시나리오 크기', c.observation==='curriculum'],
+        ['벤치마크', data.benchmark_protocol.mode, false],
       ];
       $('conditions').innerHTML=conditions.map(([key,value,treatment]) =>
         `<span class="cond ${treatment?'treatment':''}">${esc(key)} <b>${esc(value)}</b></span>`
       ).join('');
-      $('scenario-sub').textContent=`${s.id} · ${s.hosts} hosts · ${s.services} services · ${s.edges} links`;
+      $('scenario-sub').textContent=`${s.id} · 호스트 ${s.hosts} · 서비스 ${s.services} · 링크 ${s.edges}`;
       $('agent-tag').textContent=e.agent_label;
       const outcome=$('outcome');
       outcome.classList.toggle('fail',!e.success);
-      $('outcome-status').textContent=e.success?'Objective collected':'Episode incomplete';
-      $('outcome-title').textContent=e.success?'Policy reached the goal.':e.detected?'Policy tripped the detection threshold.':e.truncated?'Step budget exhausted.':'Policy stopped early.';
-      $('outcome-copy').textContent=`Seed ${c.seed} produced ${e.steps} reproducible decisions with ${pct(e.detection_risk)} terminal detection risk under ${c.stochastic?'stochastic':'deterministic'} dynamics.`;
-      $('benchmark-sub').textContent=`${c.benchmark_episodes} independently seeded scenarios per policy · budget ${c.step_budget}`;
+      $('outcome-status').textContent=e.success?'목표 수집됨':'에피소드 미완료';
+      $('outcome-title').textContent=e.success?'정책이 목표에 도달했습니다.':e.detected?'정책이 탐지 임계값을 넘었습니다.':e.truncated?'스텝 예산을 소진했습니다.':'정책이 일찍 멈췄습니다.';
+      $('outcome-copy').textContent=`Seed ${c.seed}는 ${c.stochastic?'확률적':'결정론적'} 동역학에서 ${e.steps}개의 재현 가능한 결정과 종료 시점 탐지 위험 ${pct(e.detection_risk)}를 만들었습니다.`;
+      $('benchmark-sub').textContent=`정책당 독립 seed 시나리오 ${c.benchmark_episodes}개 · 예산 ${c.step_budget}`;
       $('route').innerHTML=s.oracle_route.map((node,index) =>
-        `<li><b>${String(index+1).padStart(2,'0')}</b><span>${esc(node)}</span><small>${index===0?'ENTRY':index===s.oracle_route.length-1?'GOAL':'PIVOT'}</small></li>`
+        `<li><b>${String(index+1).padStart(2,'0')}</b><span>${esc(node)}</span><small>${index===0?'진입':index===s.oracle_route.length-1?'목표':'경유'}</small></li>`
       ).join('');
       $('benchmarks').innerHTML=data.benchmarks.map(metric =>
-        `<div class="bench-row"><span>${esc(metric.label)}</span><div class="bar"><i style="width:${Math.max(1,metric.success_rate*100)}%"></i></div><strong>${pct(metric.success_rate)}<br><small>${num(metric.mean_steps,1)}±${num(metric.std_steps,1)} st · det ${pct(metric.detection_rate)}<span class="wide-only"> · R ${num(metric.mean_reward,1)} [${num(metric.reward_ci_low,1)}, ${num(metric.reward_ci_high,1)}]</span></small></strong></div>`
+        `<div class="bench-row"><span>${esc(metric.label)}</span><div class="bar"><i style="width:${Math.max(1,metric.success_rate*100)}%"></i></div><strong>${pct(metric.success_rate)}<br><small>${num(metric.mean_steps,1)}±${num(metric.std_steps,1)} 스텝 · 탐지 ${pct(metric.detection_rate)}<span class="wide-only"> · R ${num(metric.mean_reward,1)} [${num(metric.reward_ci_low,1)}, ${num(metric.reward_ci_high,1)}]</span></small></strong></div>`
       ).join('');
       $('trace').innerHTML=e.trace.map(row =>
         `<tr><td>${row.step}</td><td class="action">${esc(row.action)}</td><td class="action">${esc(row.target_id??'—')}</td><td>${row.state.discovered_hosts}H · ${row.state.known_services}S · ${row.state.acquired_privileges}P</td><td>${pct(row.detection_risk)}</td><td>${row.reward>=0?'+':''}${num(row.reward)}</td><td><span class="pill ${row.valid&&row.outcome!=='failed'?'':'invalid'}">${esc(row.outcome)}</span></td></tr>`
@@ -419,10 +423,10 @@ _HTML_END = """
     $('controls').addEventListener('submit', async (event) => {
       event.preventDefault();
       if(!window.__RLATTACK_API__) {
-        $('notice').textContent='Offline report: launch `rlattack dashboard` to run new experiments here.';
+        $('notice').textContent='오프라인 리포트입니다. 새 실험을 돌리려면 `rlattack dashboard`로 실행하세요.';
         return;
       }
-      const button=$('run'); button.disabled=true; button.textContent='Running…';
+      const button=$('run'); button.disabled=true; button.textContent='실행 중…';
       const query=new URLSearchParams({
         size:$('size').value,difficulty:$('difficulty').value,agent:$('agent').value,
         reward_strategy:$('reward').value,seed:$('seed').value,step_budget:$('budget').value,
@@ -432,13 +436,13 @@ _HTML_END = """
       });
       try {
         const response=await fetch(`/api/experiment?${query}`);
-        if(!response.ok) throw new Error(`Experiment failed (${response.status})`);
+        if(!response.ok) throw new Error(`실험 실패 (${response.status})`);
         render(await response.json());
-        $('notice').textContent='Experiment completed locally. The same inputs will reproduce this trajectory.';
+        $('notice').textContent='로컬에서 실험을 완료했습니다. 같은 입력은 이 경로를 그대로 재현합니다.';
       } catch(error) {
         $('notice').textContent=error.message;
       } finally {
-        button.disabled=false; button.textContent='Run experiment ↗';
+        button.disabled=false; button.textContent='실험 실행 ↗';
       }
     });
 
