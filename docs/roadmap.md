@@ -134,22 +134,36 @@
     threshold**, because at the 0.9 default the oracle is detected in ~5% of episodes
     and nothing that re-prices risk can change an outcome.)
 
+58. Re-run item 52 (adversarial training) in the condition that item 55 found: mesh
+    structure with a binding threshold. (**answered, and it sharpens item 52**:
+    adversarial training does not help - against the targeted defender it *hurts*,
+    77.1% -> 46.4% on targeted/exact, -30.7 pp, p=0.0001, consistent across three
+    training seeds. The defender axis is no longer inert, so the excuse from item 52 is
+    gone; the reason is that the fixed-trained policy learns the defender's standing
+    attention posture and routes through the blind hosts - scoring *higher* against the
+    targeted defender than against none - while the adversarial policy trains against a
+    re-aiming defender with no stable posture to learn and falls back to doing less. A
+    learning defender's value is that it denies the attacker a fixed target.)
+59. Train a policy that learns to route around monitoring, rather than reading the
+    monitoring channel through a hand-written oracle. (**answered partially by item 58**:
+    the fixed-trained MaskablePPO puts only 11.4% of its risky actions on watched hosts,
+    against a 23.0% chance rate and matching the hand-written oracle's ~10% - so a learner
+    does find the evasion strategy when the defender's posture is stable. Open: whether it
+    can be learned against a re-aiming defender, where item 58 found it is not.)
+
 ## Next
 
 56. Report the family results for trained policies, not only baselines, and check
     whether curriculum training on chains transfers to star, tree, mesh, and ring.
 57. Vary host count within a family, so structure and scale are separable rather than
     confounded in one number.
-58. Re-run item 52 (adversarial training) in the condition that item 55 found: mesh
-    structure with a binding threshold. The negative result there was explained by an
-    inert defender axis, and that axis is no longer inert - the two attention arms are
-    the entire defender support of the mixed equilibrium.
-59. Train a policy that learns to route around monitoring, rather than reading the
-    monitoring channel through a hand-written oracle. `shortest-path-evasive` shows the
-    strategy pays; it does not show a learner can find it.
 60. Give the attacker a noisier read on monitoring. The current channel reports watched
     hosts exactly for every discovered host, which is an optimistic bound on what an
     attacker can fingerprint.
+61. Learn evasion against a re-aiming defender, or show it cannot be learned - the open
+    half of item 59. Item 58 found a fixed posture is learnable and a re-aiming one is
+    not for this policy; whether a policy with memory of the defender's moves can close
+    that gap is the question.
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

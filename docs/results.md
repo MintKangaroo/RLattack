@@ -338,11 +338,68 @@ rlattack families --agent shortest-path --episodes 8   # reports routes= per fam
 
 ### What this does not show
 
-The evasive attacker is a hand-written oracle reading the monitoring channel, not a
-learned policy: it shows the strategy pays, not that a learner finds it. The monitoring
-channel is also generous - it reports watched hosts exactly for every discovered host,
-so the evasion numbers are an optimistic bound on what an attacker who has to fingerprint
-monitoring could achieve. Both are roadmap items 59 and 60.
+The monitoring channel is generous - it reports watched hosts exactly for every
+discovered host, so the evasion numbers are an optimistic bound on what an attacker who
+has to fingerprint monitoring could achieve (roadmap item 60). The hand-written evasive
+oracle shows the strategy pays; whether a *learner* finds it is the next section.
+
+## Adversarial training in the live condition (item 58)
+
+Item 52 asked whether training against a defender that learns alongside the attacker
+produces a more robust policy, and answered no - but with the caveat that the defender
+axis was inert, so there was no pressure to be robust to. Item 55 built an axis that is
+not inert. This re-runs the question in that condition: MaskablePPO on a mesh curriculum
+(5, 6, 8, 10 hosts, 300k steps) under a targeted defender with the detection threshold at
+0.4, trained either against the **fixed** targeted defender or against a **contextual**
+one that re-aims each episode (`--adversarial`). Three training seeds per arm, each swept
+over the attention grid on 64 held-out mesh scenarios.
+
+| Condition | Fixed | Adversarial | Difference | 95% CI | p |
+| --- | --- | --- | --- | --- | --- |
+| passive/exact | 47.4% | 55.2% | +7.8 pp | [-0.5, +16.1] | 0.058 |
+| adaptive/exact | 43.2% | 51.0% | +7.8 pp | [+0.0, +15.6] | 0.051 |
+| **targeted/exact** | **77.1%** | **46.4%** | **-30.7 pp** | [-40.1, -21.4] | **0.0001** |
+| targeted/noisy | 6.8% | 0.0% | -6.8 pp | [-10.4, -3.6] | 0.0008 |
+
+The answer is item 52's, sharpened: **adversarial training does not help - against the
+targeted defender it significantly hurts**, and the −30.7 pp gap holds in all three
+training seeds individually (fixed 76.6 / 75.0 / 79.7 vs adversarial 40.6 / 51.6 / 46.9).
+The defender axis is no longer the excuse; the axis is live and the adversarial policy is
+worse on it.
+
+### Why - the fixed policy exploits a posture the adversarial one is denied
+
+The striking number is that the **fixed** policy scores *higher* against the targeted
+defender than against no defender at all (77.1% vs 47.4%). Attention is conserved, so the
+six hosts the defender is not watching are *cheaper* than they are under uniform
+monitoring, and a policy that has learned the defender's standing watchlist routes its
+risky actions through those blind hosts. Measured, it does exactly that: 11.4% of its
+risk-bearing actions land on a watched host, against a 23.0% chance rate and matching the
+hand-written evasive oracle's ~10% - so **a learner does find the evasion strategy**
+(a first, partial answer to item 59), when there is a stable posture to find.
+
+The adversarial policy trains against a defender that re-aims every episode, so there is
+no stable blindness to learn. It puts 27.3% of its risky actions on watched hosts - above
+chance - and instead of routing around, it falls back to doing less. That buys robustness
+to re-aiming that costs more than the exploit it forfeits. The value of a *learning*
+defender, then, is not that it responds harder but that it **denies the attacker a fixed
+target to route around** - which is the one thing the whole targeted-attention mechanism
+depends on.
+
+### Reproducing
+
+```bash
+# one training seed per arm; repeat with --seed for the dispersion above
+rlattack train --algorithm maskable-ppo --curriculum --family mesh \
+  --defender targeted --detection-threshold 0.4 --curriculum-timesteps 300000 \
+  --output-dir artifacts/policies/mesh-fixed
+rlattack train --algorithm maskable-ppo --curriculum --family mesh \
+  --defender targeted --detection-threshold 0.4 --adversarial \
+  --curriculum-timesteps 300000 --output-dir artifacts/policies/mesh-adversarial
+rlattack conditions --policy artifacts/policies/mesh-fixed/final.zip \
+  --observation curriculum --family mesh --attention-grid \
+  --detection-threshold 0.4 --episodes 64
+```
 
 ## Robustness to the experimental conditions
 
@@ -370,6 +427,11 @@ This is the sharpest limitation in this document: **the published policies are o
 valid under the conditions they trained on.**
 
 ## Training against a learning defender did not help
+
+> Superseded by [item 58](#adversarial-training-in-the-live-condition-item-58): this
+> section is the original v0.8 result under a defender axis that turned out to be inert.
+> Item 58 re-runs it in the live condition and finds adversarial training does not just
+> fail to help - it hurts. This is kept as the record of how the question first read.
 
 Roadmap item 52 asked whether a policy trained against a defender that learns
 alongside it transfers better than one trained against a fixed condition. Two

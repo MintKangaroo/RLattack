@@ -3,6 +3,35 @@
 All notable changes to RLAttack are recorded here. The project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Topology-family training and sweeps.** `rlattack train --family <name>` trains the
+  curriculum on a topology family (growing the host count across stages) instead of the
+  generator's single chain shape, and `rlattack conditions --family --attention-grid`
+  sweeps a policy across the passive/adaptive/targeted grid on that family. All training
+  conditions now flow from one `ExperimentConfig`, and `--detection-threshold`,
+  `--defender targeted`, and the monitoring channel reach the training environment - a
+  test asserts this on the built environment, not the banner.
+- **Attack-target selection in the dashboard.** A control narrows the episode's win
+  condition to one objective inside the synthetic graph, marked on the topology; there is
+  no field for an external address, by design.
+
+### Reported
+
+- **Adversarial training does not help against the targeted defender - it hurts**
+  (item 58, re-running item 52 in the live condition item 55 built). On mesh with the
+  threshold at 0.4, a MaskablePPO policy trained against a *fixed* targeted defender
+  scores 77.1% on targeted/exact; trained against a *re-aiming* one it scores 46.4%
+  (-30.7 pp, p=0.0001, consistent across three training seeds). The fixed policy learns
+  the defender's standing attention posture and routes through the blind hosts - 11.4% of
+  its risky actions land on a watched host against a 23.0% chance rate, matching the
+  hand-written evasive oracle and giving a **first partial answer to item 59: a learner
+  does find the evasion strategy** when the posture is stable. The adversarial policy,
+  facing no stable posture, does less instead (27.3% on watched, above chance). Item 52's
+  negative result reproduces with a live defender axis, with a mechanism.
+
 ## [1.0.0] - 2026-09-02
 
 ### Added
