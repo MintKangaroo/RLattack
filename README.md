@@ -39,7 +39,7 @@ seed가 언제나 같은 trajectory를 만들도록 합니다.
 | 재현 가능한 실험 | 설명 가능한 판단 | 안전한 연구 경계 |
 | --- | --- | --- |
 | Scenario·seed·reward·budget을 명시적으로 기록합니다. | 모든 action의 유효성, reward, risk, 영향을 받은 node를 추적합니다. | Socket, scanner, exploit, shell, 실제 credential을 사용하지 않습니다. |
-| Random, Greedy, Rule-based, Graph Oracle, DQN, PPO를 같은 환경에서 비교합니다. | Graph overlay와 decision trace를 HTML·JSON으로 내보냅니다. | Dashboard도 loopback 주소에서 simulation만 실행합니다. |
+| Random, Greedy, Rule-based, Graph Oracle(직진·redundant·evasive), DQN, PPO를 같은 환경에서 비교합니다. | Graph overlay와 decision trace를 HTML·JSON으로 내보냅니다. | Dashboard도 loopback 주소에서 simulation만 실행합니다. |
 
 ## 한눈에 보는 실행 흐름
 
@@ -97,10 +97,15 @@ make dashboard
 - Difficulty: `easy`, `medium`, `hard`
 - Policy: `random`, `greedy`, `rule-based`, `shortest-path`
 - Reward: `sparse`, `shaped`, `risk-aware`, `cost-aware`
+- Defender: `passive`(대조군), `adaptive`(균일 감시), `targeted`(표적 주의)
+- Discovery: `exact`, `noisy`
+- Detection threshold: episode를 끝내는 누적 risk (기본 0.9)
 - Seed와 step budget
 
 화면은 host topology와 oracle route, episode outcome, cumulative reward, detection risk,
-graph path cost, baseline success rate, 전체 decision trace를 함께 보여줍니다. `Export JSON`으로
+graph path cost, baseline success rate, 전체 decision trace를 함께 보여줍니다. Targeted
+defender를 고르면 **감시 중인 host가 graph 위에 ◉ 표시**로 나타나고, defender 통계에
+어느 host를 보고 있는지 이름이 적힙니다. `Export JSON`으로
 현재 실험을 그대로 저장할 수도 있습니다.
 
 <details>
@@ -144,17 +149,17 @@ rlattack scenario \
 
 | Command | 역할 |
 | --- | --- |
-| `rlattack demo` | Episode와 4개 baseline benchmark를 실행하고 HTML report 생성 |
+| `rlattack demo` | Episode와 6개 baseline benchmark를 실행하고 HTML report 생성 |
 | `rlattack benchmark` | 다중 seed generalization benchmark와 paired 유의성 검정 |
 | `rlattack ablation` | reward strategy ablation과 유의성 검정 |
 | `rlattack transfer` | 9개 scenario class 전체에 대한 전이 평가 |
-| `rlattack conditions` | defender × discovery 조건 격자에서의 평가 |
+| `rlattack conditions` | defender × discovery 조건 격자에서의 평가 (`--family`, `--attention-grid`) |
 | `rlattack game` | 에피소드 간 학습하는 defender와의 대전 |
 | `rlattack sweep` | hyperparameter trial 학습과 비교 |
 | `rlattack import` | 외부 attack graph(GraphML/GML/JSON)를 sanitized scenario로 변환 |
 | `rlattack equilibrium` | attacker × defender 정책 격자를 행렬 게임으로 풀이 (`--family`, `--detection-threshold`) |
-| `rlattack families` | 생성기가 만들 수 없는 구조 가족에서의 held-out 평가 |
-| `rlattack train` | optional DQN/PPO policy 학습 (`.[training]` 필요) |
+| `rlattack families` | 생성기가 만들 수 없는 구조 가족에서의 held-out 평가 (`routes=` 경로 다양성 보고) |
+| `rlattack train` | optional DQN/PPO policy 학습 (`.[training]` 필요; `--family`, `--defender targeted`, `--adversarial`) |
 | `rlattack scenario` | 검증된 scenario를 JSON으로 내보내기 |
 | `rlattack dashboard` | loopback 전용 interactive dashboard와 API 실행 |
 | `rlattack --version` | 설치된 package version 확인 |
@@ -164,7 +169,9 @@ rlattack scenario \
 | Flag | 의미 |
 | --- | --- |
 | `--deterministic` | transition uncertainty를 끄고 모든 valid action을 성공시킵니다 |
-| `--defender passive\|adaptive` | 대조군(passive)과 처치군(adaptive defender) |
+| `--defender passive\|adaptive\|targeted` | 대조군(passive), 균일 감시(adaptive), 표적 주의(targeted — 소수 host를 집중 감시하고 나머지에는 그만큼 눈이 멉니다) |
+| `--discovery exact\|noisy` | 정확한 인접 정보 vs topology를 드러내지 않는 noisy scan |
+| `--detection-threshold` | episode를 끝내는 누적 risk. 기본 0.9에서는 유능한 공격자가 거의 탐지되지 않으므로, risk를 구속조건으로 만들려면 낮춥니다 |
 | `--observation scenario\|curriculum` | scenario 크기에 맞춘 관측 vs 고정 capacity |
 | `--compare-to`, `--metric`, `--alpha`, `--resamples` | paired 유의성 검정 설정 |
 
@@ -249,8 +256,10 @@ Observation은 오직 agent가 현재까지 관찰한 simulation state로 구성
 | `validated_vulnerabilities` | 검증된 synthetic weakness |
 | `acquired_credentials` / `acquired_privileges` | simulation 내부 상태 |
 | `collected_objectives` | 수집한 objective |
+| `probed_hosts` | 마지막 vantage point 이후 probe했으나 실패한 host (자기 행동의 기억) |
 | `alert_level` | **양자화된** 경보 단계 one-hot (정확한 risk가 아님) |
 | `budget_fraction` | 남은 episode budget 비율 |
+| `monitored_hosts` | *(선택)* 발견한 host 중 targeted defender가 감시 중인 것. `expose_monitoring=True`일 때만 |
 
 ### 부분 관측
 
@@ -284,6 +293,35 @@ Action space는 **action type × target**입니다. Flat encoding은
 `affected_nodes`, `detection_risk`, `objective_captured`, `detected`, 실제 graph `path_cost`를
 `info`에 기록합니다. 목표 달성·detection·자발적 중단은 `terminated`, budget 소진은
 `truncated`입니다.
+
+### 표적화된 defender 주의 (v1.0)
+
+v0.9까지 detection risk는 **단일 스칼라**였습니다 — 어디서 무엇을 하든 같은 비율로
+쌓였습니다. 그러면 위치가 아니라 활동량만 risk를 정하므로 "덜 하는 것"이 언제나 최선이고,
+공격 전략끼리 trade-off가 생기지 않습니다(정책 격자가 항상 순수 균형이던 이유입니다).
+
+`DefenderConfig(attention_hosts=k)`는 defender가 k개 host를 `attention_focus` 배로
+집중 감시하고 나머지에는 그만큼 눈이 멀게 합니다. Risk는 **행동이 일어난 host에 귀속**되고,
+blind 배수는 focus에서 유도되어 **host 평균이 정확히 1로 보존**됩니다 — 보존하지 않으면
+"더 많이 감시하는 defender"는 그냥 "더 강한 defender"라서 배치가 아니라 총량을 재게 됩니다.
+Targeted defender에게 `harden`은 감시자를 공격자가 이미 점유한 지반으로 **재조준**하는
+행위입니다.
+
+```python
+from rlattack.defender import DefenderConfig
+from rlattack.env import AttackPathEnv, ObservationConfig
+
+env = AttackPathEnv(
+    scenario,
+    defender=DefenderConfig.targeted(),                      # 2개 host 집중 감시
+    observation_config=ObservationConfig(expose_monitoring=True),
+)
+env.reset(seed=1)
+env.monitored_hosts()   # ('host-03', 'host-01') 같은 감시 대상
+```
+
+`shortest-path-evasive` baseline은 `monitored_hosts` 채널을 읽어 감시 host를 피해
+경로를 다시 짭니다(금지가 아니라 선호 — objective host가 감시 중이면 그래도 갑니다).
 
 ### 확률적이지만 재현 가능한 전이
 
@@ -350,6 +388,8 @@ flowchart LR
 - `Greedy`: 목표·권한·접근·검증을 우선하는 진행 중심 policy
 - `Rule-based`: 명시적인 reconnaissance-to-objective 순서
 - `Graph Oracle`: static host graph의 최단 route를 참고하는 상한선
+- `Graph Oracle (redundant)`: route 밖의 credential까지 여분으로 확보하는 넓은 공격자
+- `Graph Oracle (evasive)`: 감시 host를 피해 route를 다시 짜는 공격자 (v1.0)
 
 Reward strategy는 실험 목적에 따라 교체할 수 있습니다.
 
@@ -382,6 +422,18 @@ rlattack transfer --policy artifacts/policies/final.zip --report artifacts/trans
 다만 이 정책은 학습한 조건에서만 유효합니다 — adaptive defender에는 영향을 받지 않지만
 noisy discovery에서는 성공률 **0%**입니다. Exact adjacency로 학습해 probe하는 법을
 배우지 못했기 때문입니다.
+
+**v1.0 — 첫 혼합 균형.** 표적 주의를 넣자 attacker × defender 정책 격자가 처음으로
+혼합됩니다: `mesh` + 탐지 임계값 0.4에서 공격자 `shortest-path` 82% /
+`shortest-path-evasive` 18%, defender `attention-narrow` 54% / `attention-broad` 46%
+(64 seeds). Defender 지지집합은 attention arm 둘뿐이고 균일 arm 7개는 가중치 0입니다.
+회피는 narrow defender 상대 **+14.1pp** (95% CI [+7.8, +21.1], p=0.0001, 128 paired seeds),
+broad 상대 −3.1pp (p=0.395), 균일 defender 상대 정확히 0입니다.
+
+두 조건이 **모두** 필요합니다 — `mesh`만 node-disjoint 경로가 2개 이상이라 우회할 곳이
+있고(chain/star/tree/ring은 전부 순수), 기본 임계값 0.9에서는 탐지가 거의 발동하지
+않아(oracle 2/32) risk를 재가격해도 결과가 안 바뀝니다. v0.9의 두 음성 결과는 정책이
+빈약해서가 아니라 **구조** 때문이었습니다.
 
 > **Action masking이 필수입니다.** 각 상태에서 유효한 action은 전체의 1~2%뿐이라
 > (예: 288개 중 4개), masking 없이 학습하면 탐색 예산이 invalid action에 소모되고
@@ -445,9 +497,9 @@ domain, password, token, exploit/payload 필드를 거부합니다. Export 시�
 - [x] Validated graph scenario schema
 - [x] Deterministic Gymnasium environment
 - [x] Small / medium / large scenario generator
-- [x] Four baseline policies
+- [x] Six baseline policies (random, greedy, rule-based, graph oracle ×3)
 - [x] DQN / PPO training pipeline
-- [x] Four reward strategies
+- [x] Five reward strategies
 - [x] Reproducible evaluation and explainability
 - [x] Sanitized ThreatGraph adapter
 - [x] CLI, portable HTML report, interactive dashboard
