@@ -248,6 +248,29 @@ the oracle and a learned policy should be read per family rather than in aggrega
 Every family is solvable under deterministic dynamics, which a test asserts, so a low
 score is the agent's and not the topology's.
 
+### Trained policy transfer across families (item 56)
+
+The table above is baselines. A MaskablePPO policy trained on the generator's **chain**
+curriculum (300k, exact discovery, current observation space) transfers to the held-out
+families as follows — 8 hosts, 32 shared seeds, exact discovery, paired on reward vs the
+chain reference:
+
+| Family | Success | Δ reward vs chain | p |
+| --- | --- | --- | --- |
+| chain *(in distribution)* | 62.5% | — | — |
+| star *(held out)* | **100.0%** | +8.32 | 0.0005 |
+| tree *(held out)* | **100.0%** | +5.80 | 0.0015 |
+| mesh *(held out)* | 87.5% | +4.14 | 0.0155 |
+| ring *(held out)* | **0.0%** | -9.26 | 0.0005 |
+
+Curriculum training on chains **transfers, and to the easier structures it transfers
+better than to its own distribution** — star and tree score 100% against the chain's
+62.5%, because a policy hardened on winding chains finds a star (every host one hop from
+the hub) trivial. The one wall is **ring**: 0%, the same structure that defeated the
+graph oracle (12.5% under noisy discovery). Structure, not training distribution, bounds
+transfer — a chain-trained policy generalises across every family that has a usable
+entry and an unwound shortest path, and fails exactly where the topology denies one.
+
 ## Targeted attention, and the first mixed equilibrium
 
 Up to v0.9 the defender's monitoring was a single scalar: every action raised the same

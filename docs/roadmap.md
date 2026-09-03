@@ -155,6 +155,10 @@
 
 56. Report the family results for trained policies, not only baselines, and check
     whether curriculum training on chains transfers to star, tree, mesh, and ring.
+    (**answered**: a chain-curriculum MaskablePPO transfers to star/tree/mesh at
+    100/100/87.5% - better than its own 62.5% on chain, since a policy hardened on
+    winding chains finds simpler structures easy - but scores 0% on ring, the same wall
+    the oracle hit. Structure, not training distribution, bounds transfer.)
 57. Vary host count within a family, so structure and scale are separable rather than
     confounded in one number.
 60. Give the attacker a noisier read on monitoring. The current channel reports watched

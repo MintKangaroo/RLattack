@@ -5,6 +5,15 @@ All notable changes to RLAttack are recorded here. The project follows
 
 ## [Unreleased]
 
+### Reported
+
+- **A chain-trained policy transfers across families except ring** (item 56). MaskablePPO
+  trained on the generator's chain curriculum scores, on held-out topologies (8 hosts, 32
+  seeds, exact discovery): star 100%, tree 100%, mesh 87.5% - each significantly above its
+  own 62.5% on chain - and ring 0%. Structure, not the training distribution, bounds
+  transfer: it generalises wherever the topology has a usable entry and an unwound
+  shortest path, and fails exactly where ring denies one.
+
 ### Added
 
 - **Topology-family training and sweeps.** `rlattack train --family <name>` trains the
