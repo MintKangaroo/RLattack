@@ -167,7 +167,12 @@
 61. Learn evasion against a re-aiming defender, or show it cannot be learned - the open
     half of item 59. Item 58 found a fixed posture is learnable and a re-aiming one is
     not for this policy; whether a policy with memory of the defender's moves can close
-    that gap is the question.
+    that gap is the question. (**answered, negatively**: a per-host watch-recency
+    channel (`--attacker-memory`) makes no measurable difference against the
+    `--adversarial` defender - 49.5% vs 49.0% success, reward difference indistinguishable
+    from zero over 192 paired episodes across 3 seeds each. Re-aiming's unpredictability
+    swamps whatever signal per-step recency carries at this training budget. Whether a
+    recurrent policy or a longer budget closes the gap is still open.)
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

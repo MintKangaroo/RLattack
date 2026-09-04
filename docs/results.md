@@ -424,6 +424,56 @@ rlattack conditions --policy artifacts/policies/mesh-fixed/final.zip \
   --detection-threshold 0.4 --episodes 64
 ```
 
+## Watch-history memory does not close the re-aiming gap (item 61)
+
+Item 58 found a fixed defender posture is learnable (77.1%) and a re-aiming
+(`--adversarial`) one is not (46.4%), and attributed the gap to the attacker never
+having a *stable* pattern to route around. Item 61 asked whether giving the attacker
+memory - not just `monitored_hosts`' snapshot of who is watched *right now*, but how
+long ago attention last landed on each discovered host - lets it read a re-aiming
+defender's pattern well enough to close that gap. A new `--attacker-memory` flag adds
+this as a per-host recency channel (`watch_recency`, 0.0 = watched this step, 1.0 =
+never or long enough ago not to matter).
+
+Three training seeds per arm (0, 1, 2; mesh curriculum, 300k steps, adversarial,
+detection threshold 0.4), swept on the same 64 held-out attention-grid seeds and pooled
+into one paired comparison:
+
+| Condition | Success (targeted/exact) | Reward diff vs no-memory | 95% CI | p |
+| --- | --- | --- | --- | --- |
+| No memory | 49.0% | - | - | - |
+| **With memory** | **49.5%** | +0.445 | [-0.767, +1.648] | 0.4673 |
+
+**The answer is no - watch-history memory does not help.** +0.5 points on success and a
+reward difference indistinguishable from zero (n=192 paired episodes) is not evidence of
+anything, and the per-seed numbers explain why: both arms swing by 15-20 points across
+seeds (memory: 46.9/40.6/60.9; no memory: 48.4/57.8/40.6) with no seed-to-seed
+correspondence between them. The re-aiming defender's unpredictability, which item 58
+already showed defeats a fixed strategy, apparently also swamps whatever signal the
+recency channel carries - at least at this training budget (300k steps) and this
+representation (a continuous per-host scalar, not a sequence a recurrent policy could
+learn timing from).
+
+⚠️ This does not show memory *cannot* help, only that this channel, at this budget,
+does not. Two things distinguish it from item 58's own negative result on adversarial
+training (item 52): that one had a clear mechanism (no stable posture to learn against);
+this one has no positive finding to explain, only an absence of one. Candidates for why
+it might still be worth revisiting: a recurrent policy that can integrate a *sequence*
+of recent re-aims rather than one scalar per host, or simply more training steps - the
+adversarial arm's defender is itself still evolving at 300k steps in a way the fixed
+arm's is not, which may be swamping any use the attacker could make of the channel.
+
+### Reproducing
+
+```bash
+rlattack train --algorithm maskable-ppo --curriculum --family mesh \
+  --defender targeted --detection-threshold 0.4 --adversarial --attacker-memory \
+  --curriculum-timesteps 300000 --seed 0 --output-dir artifacts/policies/mesh-adv-mem-s0
+rlattack conditions --policy artifacts/policies/mesh-adv-mem-s0/final.zip \
+  --observation curriculum --family mesh --attention-grid --attacker-memory \
+  --detection-threshold 0.4 --episodes 64
+```
+
 ## Robustness to the experimental conditions
 
 `medium/hard`, 32 shared seeds, paired against the control condition.
