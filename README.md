@@ -24,6 +24,13 @@
 
 ---
 
+> **📦 이 저장소는 archive 되었습니다.** 전체 커밋 이력을 보존한 채
+> [`autopentest`](https://github.com/MintKangaroo/autopentest)의 `rlattack/` 하위 디렉토리로
+> 옮겨졌습니다 (`git subtree`). RLAttack과 autopentest는 애초에 같은 프로젝트였습니다 —
+> RLAttack은 이 방법론(action masking, 커리큘럼, targeted defender attention)을 안전한
+> 합성 그래프에서 검증한 연구 기반이고, autopentest가 그걸 실제(권한 있는) 대상으로
+> 옮긴 것입니다. 앞으로의 작업·이슈·PR은 `autopentest` 저장소에서 진행됩니다.
+
 <img src="docs/assets/dashboard-overview.png" alt="RLAttack 시뮬레이션 관측소 개요">
 
 > 위 화면의 topology, reward, risk, benchmark, decision trace는 장식용 샘플이 아닙니다.
