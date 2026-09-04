@@ -30,6 +30,8 @@ def test_experiment_config_validates_public_inputs() -> None:
         {"observation": "partial"},
         {"defender": "chaotic"},
         {"discovery": "blind"},
+        {"detection_threshold": 0.0},
+        {"detection_threshold": 1.5},
     )
     for values in invalid_values:
         with pytest.raises(ValueError):
@@ -94,7 +96,7 @@ def test_dashboard_data_is_reproducible_and_complete() -> None:
     assert first == second
     assert first["schema_version"] == "2.0"
     assert first["episode"]["success"] is True
-    assert len(first["benchmarks"]) == 5
+    assert len(first["benchmarks"]) == 6
     rule_metrics = next(
         metric for metric in first["benchmarks"] if metric["agent_name"] == "rule-based"
     )
@@ -155,3 +157,29 @@ def test_reward_ablation_holds_everything_but_the_reward_fixed() -> None:
 
     with pytest.raises(ValueError, match="at least one reward strategy"):
         run_reward_ablation(config, ())
+
+
+def test_a_targeted_defender_is_reported_to_the_agent() -> None:
+    """Monitoring the attacker cannot observe is variance, not something to route around."""
+
+    targeted = ExperimentConfig(defender="targeted")
+
+    assert targeted.defender_config().targeted_attention
+    assert targeted.observation_config().expose_monitoring
+    transferable = ExperimentConfig(defender="targeted", observation="curriculum")
+    assert transferable.observation_config().expose_monitoring
+    assert not ExperimentConfig(defender="adaptive").observation_config().expose_monitoring
+
+
+def test_attacker_memory_reaches_the_observation_config() -> None:
+    """A flag that never reaches the environment cost a whole 400k run in v0.7 (item 61)."""
+
+    memory = ExperimentConfig(defender="targeted", attacker_memory=True)
+    assert memory.observation_config().expose_watch_history
+
+    curriculum = ExperimentConfig(
+        defender="targeted", observation="curriculum", attacker_memory=True
+    )
+    assert curriculum.observation_config().expose_watch_history
+
+    assert not ExperimentConfig(defender="targeted").observation_config().expose_watch_history

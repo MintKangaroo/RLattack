@@ -248,6 +248,232 @@ the oracle and a learned policy should be read per family rather than in aggrega
 Every family is solvable under deterministic dynamics, which a test asserts, so a low
 score is the agent's and not the topology's.
 
+### Trained policy transfer across families (item 56)
+
+The table above is baselines. A MaskablePPO policy trained on the generator's **chain**
+curriculum (300k, exact discovery, current observation space) transfers to the held-out
+families as follows — 8 hosts, 32 shared seeds, exact discovery, paired on reward vs the
+chain reference:
+
+| Family | Success | Δ reward vs chain | p |
+| --- | --- | --- | --- |
+| chain *(in distribution)* | 62.5% | — | — |
+| star *(held out)* | **100.0%** | +8.32 | 0.0005 |
+| tree *(held out)* | **100.0%** | +5.80 | 0.0015 |
+| mesh *(held out)* | 87.5% | +4.14 | 0.0155 |
+| ring *(held out)* | **0.0%** | -9.26 | 0.0005 |
+
+Curriculum training on chains **transfers, and to the easier structures it transfers
+better than to its own distribution** — star and tree score 100% against the chain's
+62.5%, because a policy hardened on winding chains finds a star (every host one hop from
+the hub) trivial. The one wall is **ring**: 0%, the same structure that defeated the
+graph oracle (12.5% under noisy discovery). Structure, not training distribution, bounds
+transfer — a chain-trained policy generalises across every family that has a usable
+entry and an unwound shortest path, and fails exactly where the topology denies one.
+
+## Targeted attention, and the first mixed equilibrium
+
+Up to v0.9 the defender's monitoring was a single scalar: every action raised the same
+detection risk wherever it happened. That is why the policy grid had a dominant strategy
+(item 53) and why adversarial training had no pressure to learn against (item 52) - if
+risk depends only on *what* you do and never on *where*, then doing less is always
+better and no two attacker strategies trade off.
+
+v1.0 replaces the scalar with a **conserved attention budget**. A targeted defender
+watches `attention_hosts` hosts closely and is correspondingly blind on the rest, with
+the blind multiplier *derived* from the focus so that the mean over hosts is exactly 1.
+Conservation is the point: without it a defender watching more hosts is simply a
+stronger defender, and a grid over allocations would measure how much monitoring there
+is rather than where it points. The attacker sees which of its *discovered* hosts are
+watched, and `shortest-path-evasive` re-plans its route to prefer unwatched hops.
+
+### The grid mixes on mesh
+
+`--family mesh --family-hosts 8 --detection-threshold 0.4`, 64 shared seeds, full
+6 x 9 grid. Attacker payoff is mean episode reward; the row player maximizes.
+
+| Attacker | attention-narrow | attention-broad |
+| --- | --- | --- |
+| shortest-path | 0.797 | **0.828** |
+| shortest-path-evasive | **0.875** | 0.734 |
+
+Neither side has a dominant strategy: evasion beats the narrow defender and loses to
+the broad one, so the equilibrium is **mixed for the first time in this project** -
+attacker `shortest-path` 82% / `shortest-path-evasive` 18%, defender `attention-narrow`
+54% / `attention-broad` 46%, value 0.811.
+
+The defender's entire support is the two attention arms. All seven uniform arms -
+`patient`, `balanced`, `trigger-happy`, `revoke-heavy`, `fast`, `harden-only`,
+`revoke-only` - carry weight zero, which is direct evidence that the mixing comes from
+targeted attention and not from enriching the grid with more arms.
+
+Evasion's advantage against the narrow defender is real, not sampling noise
+(mesh, 128 seeds, paired):
+
+| Defender | Direct | Evasive | Gain | 95% CI | p |
+| --- | --- | --- | --- | --- | --- |
+| attention-narrow | 73.4% | 87.5% | **+14.1 pp** | [+7.8, +21.1] | 0.0001 |
+| attention-broad | 84.4% | 81.2% | -3.1 pp | [-8.6, +2.3] | 0.395 |
+| balanced *(uniform)* | - | - | **+0.000** | - | - |
+
+The uniform row is the control and it is exactly zero on every seed: with no monitoring
+to observe, the evasive agent is the plain oracle. That is what rules out the gain being
+an artefact of the rerouting code rather than of routing around a watcher.
+
+### Two conditions are required, and each alone is not enough
+
+Solving the same grid on every family at the same threshold:
+
+| Family | Node-disjoint routes (mean of 16 seeds) | Equilibrium |
+| --- | --- | --- |
+| chain | 1.06 | pure (`shortest-path` / `revoke-only`) |
+| star | 1.00 | pure (`shortest-path` / `attention-narrow`) |
+| tree | 1.00 | pure (`shortest-path` / `attention-broad`) |
+| ring | 1.00 | pure (`random` / `trigger-happy`, value 0.000) |
+| **mesh** | **2.12** | **mixed** |
+
+**Route diversity** is the discriminating variable, and `rlattack families` now reports
+it per instance (`routes=`). Mesh is the only family that reliably offers more than one
+node-disjoint route to the deepest host, and it is the only one that mixes. This is not a tuning accident: with
+a single route there is nowhere else to go, so a watcher cannot be evaded however the
+attention budget is shaped. It also explains why the generator's own shape never mixed -
+it averages 1.50 disjoint routes, and in 13 of 16 seeds the host the defender watches is
+the entry host or an objective host, both of which every route must contain.
+
+**A binding detection threshold** is the second requirement. At the published default of
+0.9 the graph oracle is detected in 2 of 32 episodes and accumulates a mean risk of 0.48,
+so detection is simply not the constraint that decides an episode and nothing that
+re-prices risk can change an outcome. `--detection-threshold` is therefore a first-class
+experimental condition rather than a constant. The window is narrow: at 0.25 the grid
+collapses back to pure, because evasion starts helping against both defenders at once.
+
+Read together with the held-out family results above, both of v0.9's negative results
+have the same explanation - **structure, not policy richness, decided them**.
+
+### Reproducing
+
+```bash
+rlattack equilibrium --family mesh --family-hosts 8 \
+  --detection-threshold 0.4 --episodes 64
+rlattack equilibrium --family chain --detection-threshold 0.4 --episodes 64
+rlattack families --agent shortest-path --episodes 8   # reports routes= per family
+```
+
+### What this does not show
+
+The monitoring channel is generous - it reports watched hosts exactly for every
+discovered host, so the evasion numbers are an optimistic bound on what an attacker who
+has to fingerprint monitoring could achieve (roadmap item 60). The hand-written evasive
+oracle shows the strategy pays; whether a *learner* finds it is the next section.
+
+## Adversarial training in the live condition (item 58)
+
+Item 52 asked whether training against a defender that learns alongside the attacker
+produces a more robust policy, and answered no - but with the caveat that the defender
+axis was inert, so there was no pressure to be robust to. Item 55 built an axis that is
+not inert. This re-runs the question in that condition: MaskablePPO on a mesh curriculum
+(5, 6, 8, 10 hosts, 300k steps) under a targeted defender with the detection threshold at
+0.4, trained either against the **fixed** targeted defender or against a **contextual**
+one that re-aims each episode (`--adversarial`). Three training seeds per arm, each swept
+over the attention grid on 64 held-out mesh scenarios.
+
+| Condition | Fixed | Adversarial | Difference | 95% CI | p |
+| --- | --- | --- | --- | --- | --- |
+| passive/exact | 47.4% | 55.2% | +7.8 pp | [-0.5, +16.1] | 0.058 |
+| adaptive/exact | 43.2% | 51.0% | +7.8 pp | [+0.0, +15.6] | 0.051 |
+| **targeted/exact** | **77.1%** | **46.4%** | **-30.7 pp** | [-40.1, -21.4] | **0.0001** |
+| targeted/noisy | 6.8% | 0.0% | -6.8 pp | [-10.4, -3.6] | 0.0008 |
+
+The answer is item 52's, sharpened: **adversarial training does not help - against the
+targeted defender it significantly hurts**, and the −30.7 pp gap holds in all three
+training seeds individually (fixed 76.6 / 75.0 / 79.7 vs adversarial 40.6 / 51.6 / 46.9).
+The defender axis is no longer the excuse; the axis is live and the adversarial policy is
+worse on it.
+
+### Why - the fixed policy exploits a posture the adversarial one is denied
+
+The striking number is that the **fixed** policy scores *higher* against the targeted
+defender than against no defender at all (77.1% vs 47.4%). Attention is conserved, so the
+six hosts the defender is not watching are *cheaper* than they are under uniform
+monitoring, and a policy that has learned the defender's standing watchlist routes its
+risky actions through those blind hosts. Measured, it does exactly that: 11.4% of its
+risk-bearing actions land on a watched host, against a 23.0% chance rate and matching the
+hand-written evasive oracle's ~10% - so **a learner does find the evasion strategy**
+(a first, partial answer to item 59), when there is a stable posture to find.
+
+The adversarial policy trains against a defender that re-aims every episode, so there is
+no stable blindness to learn. It puts 27.3% of its risky actions on watched hosts - above
+chance - and instead of routing around, it falls back to doing less. That buys robustness
+to re-aiming that costs more than the exploit it forfeits. The value of a *learning*
+defender, then, is not that it responds harder but that it **denies the attacker a fixed
+target to route around** - which is the one thing the whole targeted-attention mechanism
+depends on.
+
+### Reproducing
+
+```bash
+# one training seed per arm; repeat with --seed for the dispersion above
+rlattack train --algorithm maskable-ppo --curriculum --family mesh \
+  --defender targeted --detection-threshold 0.4 --curriculum-timesteps 300000 \
+  --output-dir artifacts/policies/mesh-fixed
+rlattack train --algorithm maskable-ppo --curriculum --family mesh \
+  --defender targeted --detection-threshold 0.4 --adversarial \
+  --curriculum-timesteps 300000 --output-dir artifacts/policies/mesh-adversarial
+rlattack conditions --policy artifacts/policies/mesh-fixed/final.zip \
+  --observation curriculum --family mesh --attention-grid \
+  --detection-threshold 0.4 --episodes 64
+```
+
+## Watch-history memory does not close the re-aiming gap (item 61)
+
+Item 58 found a fixed defender posture is learnable (77.1%) and a re-aiming
+(`--adversarial`) one is not (46.4%), and attributed the gap to the attacker never
+having a *stable* pattern to route around. Item 61 asked whether giving the attacker
+memory - not just `monitored_hosts`' snapshot of who is watched *right now*, but how
+long ago attention last landed on each discovered host - lets it read a re-aiming
+defender's pattern well enough to close that gap. A new `--attacker-memory` flag adds
+this as a per-host recency channel (`watch_recency`, 0.0 = watched this step, 1.0 =
+never or long enough ago not to matter).
+
+Three training seeds per arm (0, 1, 2; mesh curriculum, 300k steps, adversarial,
+detection threshold 0.4), swept on the same 64 held-out attention-grid seeds and pooled
+into one paired comparison:
+
+| Condition | Success (targeted/exact) | Reward diff vs no-memory | 95% CI | p |
+| --- | --- | --- | --- | --- |
+| No memory | 49.0% | - | - | - |
+| **With memory** | **49.5%** | +0.445 | [-0.767, +1.648] | 0.4673 |
+
+**The answer is no - watch-history memory does not help.** +0.5 points on success and a
+reward difference indistinguishable from zero (n=192 paired episodes) is not evidence of
+anything, and the per-seed numbers explain why: both arms swing by 15-20 points across
+seeds (memory: 46.9/40.6/60.9; no memory: 48.4/57.8/40.6) with no seed-to-seed
+correspondence between them. The re-aiming defender's unpredictability, which item 58
+already showed defeats a fixed strategy, apparently also swamps whatever signal the
+recency channel carries - at least at this training budget (300k steps) and this
+representation (a continuous per-host scalar, not a sequence a recurrent policy could
+learn timing from).
+
+⚠️ This does not show memory *cannot* help, only that this channel, at this budget,
+does not. Two things distinguish it from item 58's own negative result on adversarial
+training (item 52): that one had a clear mechanism (no stable posture to learn against);
+this one has no positive finding to explain, only an absence of one. Candidates for why
+it might still be worth revisiting: a recurrent policy that can integrate a *sequence*
+of recent re-aims rather than one scalar per host, or simply more training steps - the
+adversarial arm's defender is itself still evolving at 300k steps in a way the fixed
+arm's is not, which may be swamping any use the attacker could make of the channel.
+
+### Reproducing
+
+```bash
+rlattack train --algorithm maskable-ppo --curriculum --family mesh \
+  --defender targeted --detection-threshold 0.4 --adversarial --attacker-memory \
+  --curriculum-timesteps 300000 --seed 0 --output-dir artifacts/policies/mesh-adv-mem-s0
+rlattack conditions --policy artifacts/policies/mesh-adv-mem-s0/final.zip \
+  --observation curriculum --family mesh --attention-grid --attacker-memory \
+  --detection-threshold 0.4 --episodes 64
+```
+
 ## Robustness to the experimental conditions
 
 `medium/hard`, 32 shared seeds, paired against the control condition.
@@ -274,6 +500,11 @@ This is the sharpest limitation in this document: **the published policies are o
 valid under the conditions they trained on.**
 
 ## Training against a learning defender did not help
+
+> Superseded by [item 58](#adversarial-training-in-the-live-condition-item-58): this
+> section is the original v0.8 result under a defender axis that turned out to be inert.
+> Item 58 re-runs it in the live condition and finds adversarial training does not just
+> fail to help - it hurts. This is kept as the record of how the question first read.
 
 Roadmap item 52 asked whether a policy trained against a defender that learns
 alongside it transfers better than one trained against a fixed condition. Two

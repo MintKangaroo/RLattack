@@ -774,3 +774,209 @@ def test_the_contextual_defender_reads_budget_pressure() -> None:
 
     assert env.defender_policy is not None
     assert env.defender.response_budget == 2
+
+
+def watching(hosts: int, **overrides: object) -> DefenderConfig:
+    settings: dict[str, object] = {
+        "enabled": True,
+        "attention_hosts": hosts,
+        "attention_focus": 3.0,
+        "alert_threshold": 1.0,
+    }
+    settings.update(overrides)
+    return DefenderConfig(**settings)  # type: ignore[arg-type]
+
+
+def test_a_targeted_defender_watches_the_most_exposed_host() -> None:
+    """Watching the objective host instead would put the watcher where nothing happens."""
+
+    env = deterministic_env(defender=watching(1))
+    env.reset(seed=1)
+
+    # ``web`` runs the only service; ``db`` merely holds the objective.
+    assert env.monitored_hosts() == ("web",)
+
+
+def test_uniform_monitoring_names_no_watched_hosts() -> None:
+    env = deterministic_env(defender=DefenderConfig.adaptive())
+    env.reset(seed=1)
+
+    assert env.monitored_hosts() == ()
+
+
+def test_where_an_action_lands_decides_what_it_costs() -> None:
+    """The property items 52 and 53 found missing.
+
+    Under uniform monitoring risk depends only on *what* the attacker does, so no
+    strategy trades off against another and doing less is always better. Here the same
+    enumeration is cheaper than uniform when the defender is looking elsewhere and
+    dearer when it is looking here, which makes evasion a routing decision rather than
+    an abstinence decision.
+    """
+
+    def enumeration_risk(scenario: Scenario, config: DefenderConfig) -> float:
+        env = AttackPathEnv(scenario, dynamics=DynamicsConfig.deterministic(), defender=config)
+        env.reset(seed=1)
+        env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+        _, _, _, _, info = env.step(env.encode_action(Action.ENUMERATE_SERVICE, 0))
+        return float(info["detection_risk"])
+
+    # Six equally exposed hosts, so a single watcher lands somewhere other than the
+    # entry host and the attacker's first move is off-camera.
+    spread = generate_scenario("medium", "hard", 1)
+    probe = AttackPathEnv(spread, defender=watching(1))
+    probe.reset(seed=1)
+    assert spread.entry_host_ids[0] not in probe.monitored_hosts()
+
+    assert enumeration_risk(spread, watching(1)) < enumeration_risk(spread, DefenderConfig())
+
+    # In the two-host scenario the entry host runs the only service, so it is the one
+    # a targeted defender watches and the same action is dearer than uniform.
+    focused = make_scenario()
+    watcher = AttackPathEnv(focused, defender=watching(1))
+    watcher.reset(seed=1)
+    assert focused.entry_host_ids[0] in watcher.monitored_hosts()
+
+    assert enumeration_risk(focused, watching(1)) > enumeration_risk(focused, DefenderConfig())
+
+
+def test_an_action_with_no_host_is_priced_at_the_defender_s_mean_attention() -> None:
+    """Privilege escalation walks the privilege graph, so it lands nowhere in the network.
+
+    Attention is conserved, so the mean is 1: an unattributable action costs exactly
+    what it would have cost against a uniform defender, whatever the allocation.
+    """
+
+    def failed_escalation_risk(defender: DefenderConfig) -> float:
+        env = AttackPathEnv(generate_scenario("medium", "hard", 1), defender=defender)
+        env.reset(seed=3)
+        env._detection_risk = 0.0
+        env._failed_attempt(("user", "admin"))
+        return env._detection_risk
+
+    assert failed_escalation_risk(watching(1)) == pytest.approx(
+        failed_escalation_risk(DefenderConfig())
+    )
+    assert failed_escalation_risk(watching(4)) == pytest.approx(
+        failed_escalation_risk(DefenderConfig())
+    )
+
+
+def test_the_agent_sees_monitoring_only_on_hosts_it_has_discovered() -> None:
+    env = AttackPathEnv(
+        generate_scenario("medium", "hard", 1),
+        dynamics=DynamicsConfig.deterministic(),
+        defender=watching(1),
+        observation_config=ObservationConfig(expose_monitoring=True),
+    )
+    observation, _ = env.reset(seed=1)
+    watched = env.monitored_hosts()
+    host_ids = [host.id for host in env.scenario.hosts]
+    reported = {host_ids[index] for index in np.flatnonzero(observation["monitored_hosts"])}
+
+    assert reported <= set(watched)
+    assert reported <= {
+        host_ids[index] for index in np.flatnonzero(observation["discovered_hosts"])
+    }
+
+
+def test_monitoring_reports_nothing_when_the_defender_watches_uniformly() -> None:
+    env = deterministic_env(
+        defender=DefenderConfig.adaptive(),
+        observation_config=ObservationConfig(expose_monitoring=True),
+    )
+    observation, _ = env.reset(seed=1)
+
+    assert int(observation["monitored_hosts"].sum()) == 0
+    assert "monitored_hosts" in observation
+
+
+def test_hardening_re_aims_a_targeted_defender_onto_the_ground_already_taken() -> None:
+    env = deterministic_env(
+        defender=watching(
+            1,
+            alert_threshold=0.0,
+            response_cooldown=1,
+            revocation_probability=0.0,
+            response_latency=0,
+            observation_noise=0.0,
+        )
+    )
+    env.reset(seed=1)
+    env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+    env.step(env.encode_action(Action.ENUMERATE_SERVICE, 0))
+
+    # The watcher follows the evidence onto the host the attacker holds, which leaves
+    # the frontier it has not reached yet cheaper than it was.
+    assert env.monitored_hosts() == ("web",)
+
+
+def test_watch_recency_reports_zero_for_the_host_watched_this_step() -> None:
+    env = deterministic_env(
+        defender=watching(1),
+        observation_config=ObservationConfig(expose_watch_history=True),
+    )
+    observation, _ = env.reset(seed=1)
+    host_ids = [host.id for host in env.scenario.hosts]
+
+    assert "watch_recency" in observation
+    assert observation["watch_recency"][host_ids.index("web")] == pytest.approx(0.0)
+
+
+def test_watch_recency_grows_stale_without_a_re_aim() -> None:
+    env = deterministic_env(
+        defender=watching(1),
+        observation_config=ObservationConfig(expose_watch_history=True),
+    )
+    env.reset(seed=1)
+    host_ids = [host.id for host in env.scenario.hosts]
+    web = host_ids.index("web")
+
+    observation, _, _, _, _ = env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+    first = observation["watch_recency"][web]
+    observation, _, _, _, _ = env.step(env.encode_action(Action.ENUMERATE_SERVICE, 0))
+    second = observation["watch_recency"][web]
+
+    # ``web`` was watched at reset and the default defender rarely re-aims, so the
+    # channel should read strictly larger the longer it goes without a fresh landing.
+    assert 0.0 < first < second
+
+
+def test_watch_recency_resets_to_zero_when_attention_moves() -> None:
+    env = deterministic_env(
+        defender=watching(
+            1,
+            alert_threshold=0.0,
+            response_cooldown=1,
+            revocation_probability=0.0,
+            response_latency=0,
+            observation_noise=0.0,
+        ),
+        observation_config=ObservationConfig(expose_watch_history=True),
+    )
+    env.reset(seed=1)
+    host_ids = [host.id for host in env.scenario.hosts]
+    web = host_ids.index("web")
+
+    observation, _, _, _, _ = env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+    # Hardening re-aims onto ``web`` (already reached) this step, so it is fresh.
+    assert env.monitored_hosts() == ("web",)
+    assert observation["watch_recency"][web] == pytest.approx(0.0)
+
+
+def test_watch_recency_is_pinned_undiscovered_and_off_by_default() -> None:
+    env = deterministic_env(
+        defender=watching(1),
+        observation_config=ObservationConfig(expose_watch_history=True),
+    )
+    observation, _ = env.reset(seed=1)
+    undiscovered = np.flatnonzero(observation["discovered_hosts"] == 0)
+
+    assert bool(np.all(observation["watch_recency"][undiscovered] == 1.0))
+
+    passive = deterministic_env(observation_config=ObservationConfig(expose_watch_history=True))
+    passive_obs, _ = passive.reset(seed=1)
+    assert bool(np.all(passive_obs["watch_recency"] == 1.0))
+
+    off, _ = deterministic_env(defender=watching(1)).reset(seed=1)
+    assert "watch_recency" not in off

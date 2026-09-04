@@ -114,12 +114,13 @@ def test_cli_benchmark_exports_episode_records(
     )
     rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
 
-    assert len(rows) == 15
+    assert len(rows) == 18
     assert {row["agent"] for row in rows} == {
         "random",
         "greedy",
         "rule-based",
         "shortest-path",
+        "shortest-path-evasive",
         "shortest-path-broad",
     }
     assert "generalization benchmark" in capsys.readouterr().out
@@ -907,8 +908,8 @@ def test_cli_equilibrium_solves_the_policy_grid(
 
     assert "attacker x defender equilibrium" in printed
     assert "value     :" in printed
-    assert len(solved["payoffs"]) == 5
-    assert len(solved["payoffs"][0]) == 7
+    assert len(solved["payoffs"]) == 6
+    assert len(solved["payoffs"][0]) == 9
     assert sum(solved["attacker_mixture"]) == pytest.approx(1.0)
 
 
@@ -946,6 +947,45 @@ def test_cli_adversarial_training_attaches_a_learning_defender(
     )
     assert policies[0] is not None
     assert "adversarial/exact" in capsys.readouterr().out
+
+
+def test_cli_attacker_memory_reaches_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flag that never reaches the environment cost a whole 400k run in v0.7 (item 61)."""
+
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    built: list[object] = []
+
+    def record(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        for builder in builders:
+            built.append(cast(Callable[[], StageEnv], builder)())
+
+    monkeypatch.setattr(cli, "train_curriculum", record)
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--defender",
+                "targeted",
+                "--attacker-memory",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "mem"),
+            ]
+        )
+        == 0
+    )
+
+    assert built, "no curriculum stage was built"
+    for stage_env in built:
+        for env in cast(StageEnv, stage_env)._envs:
+            assert env.observation_config.expose_watch_history
 
 
 def test_cli_families_evaluates_the_held_out_topologies(
@@ -1021,3 +1061,128 @@ def test_every_subcommand_has_a_handler() -> None:
     handled = set(cli._COMMANDS) | {"demo"}
 
     assert declared == handled
+
+
+def test_cli_equilibrium_solves_a_held_out_family_grid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Structure decides whether the grid has anything to trade off, so it is a knob."""
+
+    output = tmp_path / "mesh-equilibrium.json"
+
+    assert (
+        cli.main(
+            [
+                "equilibrium",
+                "--family",
+                "mesh",
+                "--family-hosts",
+                "6",
+                "--detection-threshold",
+                "0.4",
+                "--episodes",
+                "2",
+                "--iterations",
+                "500",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    solved = json.loads(output.read_text(encoding="utf-8"))
+
+    assert "mesh/6 hosts" in printed
+    assert "threshold 0.4" in printed
+    assert len(solved["payoffs"]) == 6
+
+
+def test_cli_training_carries_the_targeted_defender_conditions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The v1.0 conditions must reach the environment too, not only the older ones.
+
+    `--defender targeted` silently degraded to a passive defender and
+    `--detection-threshold` never left the parser, which is the same failure the test
+    above was written for; both are asserted on the built environment.
+    """
+
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    built: list[StageEnv] = []
+
+    def record(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        built.extend(cast(Callable[[], StageEnv], builder)() for builder in builders)
+
+    monkeypatch.setattr(cli, "train_curriculum", record)
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--defender",
+                "targeted",
+                "--detection-threshold",
+                "0.4",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "targeted"),
+            ]
+        )
+        == 0
+    )
+
+    assert built
+    for stage_env in built:
+        env = stage_env.current
+        assert env.defender.targeted_attention, "targeted defender must reach the env"
+        assert env.dynamics.detection_threshold == 0.4
+        assert env.observation_config.expose_monitoring, (
+            "a policy trained against a targeted defender must be able to see it"
+        )
+
+    assert "monitored_hosts" in built[0].reset(seed=0)[0]
+    assert "targeted/exact/threshold 0.4" in capsys.readouterr().out
+
+
+def test_cli_conditions_sweeps_a_family_on_the_attention_grid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "mesh-conditions.jsonl"
+
+    assert (
+        cli.main(
+            [
+                "conditions",
+                "--agent",
+                "greedy",
+                "--family",
+                "mesh",
+                "--family-hosts",
+                "5",
+                "--attention-grid",
+                "--detection-threshold",
+                "0.4",
+                "--episodes",
+                "2",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert "mesh/5 hosts" in printed
+    assert "threshold 0.4" in printed
+    assert {row["agent"] for row in rows} == {
+        "passive/exact",
+        "adaptive/exact",
+        "targeted/exact",
+        "targeted/noisy",
+    }

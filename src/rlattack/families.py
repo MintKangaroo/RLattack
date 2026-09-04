@@ -154,6 +154,7 @@ class FamilyShape:
     edges: int
     mean_out_degree: float
     diameter: int
+    route_diversity: int = 1
 
     @classmethod
     def measure(cls, family: str, hosts: int, seed: int) -> FamilyShape:
@@ -169,4 +170,26 @@ class FamilyShape:
             edges=graph.number_of_edges(),
             mean_out_degree=graph.number_of_edges() / max(1, graph.number_of_nodes()),
             diameter=nx.diameter(undirected.subgraph(largest)),
+            route_diversity=_route_diversity(graph),
         )
+
+
+def _route_diversity(graph: nx.DiGraph[object]) -> int:
+    """Return how many node-disjoint routes lead from the entry to the deepest host.
+
+    This is the structural variable that decides whether targeted monitoring can be
+    routed around at all. With one route there is no alternative to take, so a
+    defender's attention cannot be evaded however it is shaped - which is why the
+    policy grid mixes on ``mesh`` and stays pure on every other family.
+    """
+
+    nodes = list(graph.nodes)
+    if len(nodes) < 2:
+        return 0
+    entry = nodes[0]
+    lengths = nx.single_source_shortest_path_length(graph, entry)
+    reachable = {node: length for node, length in lengths.items() if node != entry}
+    if not reachable:
+        return 0
+    deepest = max(reachable, key=lambda node: (reachable[node], str(node)))
+    return len(list(nx.node_disjoint_paths(graph, entry, deepest)))

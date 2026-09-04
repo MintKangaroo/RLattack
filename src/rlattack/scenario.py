@@ -238,6 +238,22 @@ class Scenario(ScenarioModel):
             if reference not in ids[kind]:
                 raise ValueError(f"{field_name} references unknown {kind} '{reference}'")
 
+    def targeting(self, objective_ids: Iterable[str]) -> Scenario:
+        """Return this scenario with its win condition narrowed to the chosen objectives.
+
+        Selecting a target points the episode at one objective instead of requiring all
+        of them. Nothing outside the synthetic graph is touched and no record is added:
+        the same hosts, services, and edges remain, so only what counts as success
+        moves. This is the only sense in which this simulation has an "attack target" -
+        there is no address to reach and no scan to run.
+        """
+
+        wanted = set(objective_ids)
+        kept = tuple(objective for objective in self.objectives if objective.id in wanted)
+        if not kept:
+            raise ValueError("target must name at least one objective in the scenario")
+        return self.model_copy(update={"objectives": kept})
+
     def to_networkx(self) -> nx.MultiDiGraph[str, dict[str, object], dict[str, object]]:
         """Build a NetworkX graph without performing any external I/O."""
 

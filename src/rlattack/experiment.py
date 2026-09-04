@@ -24,9 +24,16 @@ from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.reward import RewardStrategy, build_reward_config
 from rlattack.scenario import Scenario
 
-AgentName = Literal["random", "greedy", "rule-based", "shortest-path", "shortest-path-broad"]
+AgentName = Literal[
+    "random",
+    "greedy",
+    "rule-based",
+    "shortest-path",
+    "shortest-path-broad",
+    "shortest-path-evasive",
+]
 ObservationMode = Literal["scenario", "curriculum"]
-DefenderMode = Literal["passive", "adaptive"]
+DefenderMode = Literal["passive", "adaptive", "targeted"]
 DiscoveryMode = Literal["exact", "noisy"]
 
 REWARD_STRATEGIES: tuple[RewardStrategy, ...] = (
@@ -46,6 +53,7 @@ AGENT_LABELS: dict[AgentName, str] = {
     "rule-based": "Rule-based",
     "shortest-path": "Graph oracle",
     "shortest-path-broad": "Graph oracle (redundant)",
+    "shortest-path-evasive": "Graph oracle (evasive)",
 }
 
 
@@ -64,6 +72,8 @@ class ExperimentConfig:
     observation: ObservationMode = "scenario"
     defender: DefenderMode = "passive"
     discovery: DiscoveryMode = "exact"
+    detection_threshold: float = 0.9
+    attacker_memory: bool = False
 
     def __post_init__(self) -> None:
         if self.size not in {"small", "medium", "large"}:
@@ -84,30 +94,59 @@ class ExperimentConfig:
             raise ValueError(f"benchmark_episodes must be at most {MAX_BENCHMARK_EPISODES}")
         if self.observation not in ("scenario", "curriculum"):
             raise ValueError("observation must be scenario or curriculum")
-        if self.defender not in ("passive", "adaptive"):
-            raise ValueError("defender must be passive or adaptive")
+        if self.defender not in ("passive", "adaptive", "targeted"):
+            raise ValueError("defender must be passive, adaptive, or targeted")
         if self.discovery not in ("exact", "noisy"):
             raise ValueError("discovery must be exact or noisy")
+        if not 0.0 < self.detection_threshold <= 1.0:
+            raise ValueError("detection_threshold must be in (0, 1]")
 
     def dynamics(self) -> DynamicsConfig:
-        """Return the transition-uncertainty configuration for this experiment."""
+        """Return the transition-uncertainty configuration for this experiment.
+
+        ``detection_threshold`` is a condition rather than a constant because at the
+        default of 0.9 detection almost never fires against a competent attacker - the
+        graph oracle is caught in roughly one episode in twenty - so nothing that
+        re-prices risk can change an outcome, and a grid built on risk trade-offs has
+        no trade-off to find.
+        """
 
         noisy = self.discovery == "noisy"
-        if self.stochastic:
-            return DynamicsConfig(noisy_discovery=noisy)
-        return DynamicsConfig(stochastic=False, noisy_discovery=noisy)
+        return DynamicsConfig(
+            stochastic=self.stochastic,
+            noisy_discovery=noisy,
+            detection_threshold=self.detection_threshold,
+        )
 
     def defender_config(self) -> DefenderConfig:
-        """Return the defender condition: passive control, or adaptive treatment."""
+        """Return the defender condition: passive control, or one of two treatments.
 
-        return DefenderConfig.adaptive() if self.defender == "adaptive" else DefenderConfig()
+        ``adaptive`` spreads monitoring uniformly; ``targeted`` concentrates it on a
+        few hosts, which is what lets an attacker route around the defender instead of
+        only doing less.
+        """
+
+        if self.defender == "targeted":
+            return DefenderConfig.targeted()
+        if self.defender == "adaptive":
+            return DefenderConfig.adaptive()
+        return DefenderConfig()
 
     def observation_config(self) -> ObservationConfig:
-        """Return the observation interface: scenario-sized, or fixed for transfer."""
+        """Return the observation interface: scenario-sized, or fixed for transfer.
 
+        A targeted defender is reported to the agent, because monitoring it cannot see
+        is not something it can route around.
+        """
+
+        monitoring = self.defender == "targeted"
         if self.observation == "curriculum":
-            return ObservationConfig.for_curriculum()
-        return ObservationConfig()
+            return ObservationConfig.for_curriculum(
+                expose_monitoring=monitoring, expose_watch_history=self.attacker_memory
+            )
+        return ObservationConfig(
+            expose_monitoring=monitoring, expose_watch_history=self.attacker_memory
+        )
 
 
 @dataclass(frozen=True)
@@ -159,6 +198,8 @@ def create_agent(name: AgentName, scenario: Scenario, *, seed: int) -> Agent:
         return ShortestPathOracle(scenario)
     if name == "shortest-path-broad":
         return ShortestPathOracle(scenario, redundant=True)
+    if name == "shortest-path-evasive":
+        return ShortestPathOracle(scenario, evasive=True)
     raise ValueError(f"unsupported baseline agent: {name}")
 
 
@@ -263,20 +304,26 @@ def benchmark_seeds(config: ExperimentConfig) -> tuple[int, ...]:
 def run_benchmarks(
     config: ExperimentConfig,
     extra_agents: Mapping[str, Callable[[int], Agent]] | None = None,
+    scenario_transform: Callable[[Scenario], Scenario] | None = None,
 ) -> dict[str, BenchmarkMetrics]:
     """Benchmark every baseline over independently generated scenarios.
 
     Each seed regenerates the scenario, so the result is a generalization benchmark
     rather than a repeated replay of one fixed graph.
+
+    ``scenario_transform`` post-processes each generated scenario before it is used,
+    so a chosen target narrows every seed's win condition the same way and the baseline
+    table stays consistent with the single episode above it.
     """
 
     reward_config = build_reward_config(config.reward_strategy)
     dynamics = config.dynamics()
     observation_config = config.observation_config()
     defender = config.defender_config()
+    transform = scenario_transform or (lambda scenario: scenario)
 
     def scenario_for(seed: int) -> Scenario:
-        return generate_scenario(config.size, config.difficulty, seed)
+        return transform(generate_scenario(config.size, config.difficulty, seed))
 
     def env_factory(seed: int) -> AttackPathEnv:
         return AttackPathEnv(
@@ -348,11 +395,48 @@ def run_reward_ablation(
     }
 
 
-def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, Any]:
-    """Build the deterministic view model consumed by HTML and JSON clients."""
+def monitored_hosts(scenario: Scenario, config: ExperimentConfig) -> tuple[str, ...]:
+    """Return the hosts a targeted defender starts the episode watching.
+
+    Empty for every other defender: uniform monitoring has no hosts to name, and
+    reporting all of them would read as attention where there is none.
+    """
+
+    return AttackPathEnv(
+        scenario,
+        step_budget=config.step_budget,
+        dynamics=config.dynamics(),
+        observation_config=config.observation_config(),
+        defender=config.defender_config(),
+    ).monitored_hosts()
+
+
+def build_dashboard_data(
+    config: ExperimentConfig | None = None, target: str = ""
+) -> dict[str, Any]:
+    """Build the deterministic view model consumed by HTML and JSON clients.
+
+    ``target`` is the id of the objective the episode should pursue. Empty means the
+    scenario's own full win condition. A target names an objective inside the synthetic
+    graph, never an external address: the dashboard has no field for one and this
+    function has no way to reach outside the in-memory scenario.
+    """
 
     selected = config or ExperimentConfig()
-    scenario = generate_scenario(selected.size, selected.difficulty, selected.seed)
+    full_scenario = generate_scenario(selected.size, selected.difficulty, selected.seed)
+    targets = [
+        {
+            "id": objective.id,
+            "host": objective.host_id,
+            "label": objective.host_id.replace("host-", "NODE "),
+            "privilege": objective.required_privilege_id or "any",
+        }
+        for objective in full_scenario.objectives
+    ]
+    if target and target not in {objective.id for objective in full_scenario.objectives}:
+        raise ValueError(f"unknown target objective: {target}")
+    transform = (lambda scenario: scenario.targeting([target])) if target else None
+    scenario = transform(full_scenario) if transform else full_scenario
     episode = run_episode(
         scenario,
         agent_name=selected.agent,
@@ -363,7 +447,7 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
         observation_config=selected.observation_config(),
         defender=selected.defender_config(),
     )
-    benchmarks = run_benchmarks(selected)
+    benchmarks = run_benchmarks(selected, scenario_transform=transform)
     metrics = [
         {
             **{key: value for key, value in asdict(metric).items() if key != "outcomes"},
@@ -376,6 +460,7 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
     visited = set(episode.visited_nodes)
     entry_hosts = set(scenario.entry_host_ids)
     objective_hosts = {objective.host_id for objective in scenario.objectives}
+    monitored = monitored_hosts(scenario, selected)
     host_nodes = [
         {
             "id": host.id,
@@ -394,6 +479,8 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
             "visited": host.id in visited,
             "entry": host.id in entry_hosts,
             "objective": host.id in objective_hosts,
+            "monitored": host.id in monitored,
+            "target": bool(target) and host.id in objective_hosts,
         }
         for host in scenario.hosts
     ]
@@ -411,6 +498,10 @@ def build_dashboard_data(config: ExperimentConfig | None = None) -> dict[str, An
     return {
         "schema_version": "2.0",
         "config": asdict(selected),
+        "target": {
+            "selected": target,
+            "available": targets,
+        },
         "scenario": {
             "id": scenario.id,
             "name": scenario.name,

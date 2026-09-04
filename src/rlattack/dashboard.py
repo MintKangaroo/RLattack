@@ -58,6 +58,8 @@ def create_app() -> Any:
         stochastic: bool = True,
         defender: str = "passive",
         discovery: str = "exact",
+        detection_threshold: float = 0.9,
+        target: str = "",
     ) -> dict[str, object]:
         try:
             config = ExperimentConfig(
@@ -71,10 +73,11 @@ def create_app() -> Any:
                 stochastic=stochastic,
                 defender=cast(DefenderMode, defender),
                 discovery=cast(DiscoveryMode, discovery),
+                detection_threshold=detection_threshold,
             )
+            return build_dashboard_data(config, target=target)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        return build_dashboard_data(config)
 
     return app
 

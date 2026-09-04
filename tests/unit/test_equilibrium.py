@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
@@ -9,6 +9,7 @@ import pytest
 from rlattack.defender import DEFAULT_ARMS, DefenderArm
 from rlattack.equilibrium import Equilibrium, build_payoffs, solve_grid, solve_zero_sum
 from rlattack.experiment import AgentName, ExperimentConfig
+from rlattack.scenario import Scenario
 
 
 def test_matching_pennies_mixes_evenly() -> None:
@@ -71,6 +72,7 @@ def test_solving_the_grid_keeps_the_labels() -> None:
         config: ExperimentConfig,
         attackers: Sequence[AgentName],
         defenders: Sequence[DefenderArm],
+        scenario_builder: Callable[[int], Scenario] | None = None,
     ) -> np.ndarray[Any, np.dtype[np.float64]]:
         calls.append((len(attackers), len(defenders)))
         return np.array([[0.9, 0.4], [0.2, 0.1]])

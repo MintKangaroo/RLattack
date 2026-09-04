@@ -11,12 +11,18 @@ from typing import cast
 
 from rlattack import __version__
 from rlattack.agents import Agent
-from rlattack.conditions import CONTROL_LABEL, run_condition_sweep
+from rlattack.conditions import (
+    ATTENTION_GRID,
+    CONDITION_GRID,
+    CONTROL_LABEL,
+    run_condition_sweep,
+)
 from rlattack.curriculum import (
     DEFAULT_CURRICULUM,
     CurriculumStage,
     StageEnv,
     evaluate_transfer,
+    family_curriculum,
     scale_curriculum,
     stage_env_factory,
 )
@@ -40,6 +46,7 @@ from rlattack.experiment import (
 )
 from rlattack.export import write_results
 from rlattack.families import (
+    FAMILIES,
     HELD_OUT_FAMILIES,
     FamilyShape,
     evaluate_families,
@@ -53,6 +60,7 @@ from rlattack.importers import import_scenario_file
 from rlattack.policies import Algorithm, load_policy
 from rlattack.report import write_dashboard_report, write_transfer_report
 from rlattack.reward import RewardStrategy
+from rlattack.scenario import Scenario
 from rlattack.stats import compare_benchmarks
 from rlattack.sweep import trials_by_label
 from rlattack.training import (
@@ -71,7 +79,14 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--agent",
-        choices=("random", "greedy", "rule-based", "shortest-path", "shortest-path-broad"),
+        choices=(
+            "random",
+            "greedy",
+            "rule-based",
+            "shortest-path",
+            "shortest-path-broad",
+            "shortest-path-evasive",
+        ),
         default="greedy",
     )
     parser.add_argument(
@@ -94,9 +109,30 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--defender",
-        choices=("passive", "adaptive"),
+        choices=("passive", "adaptive", "targeted"),
         default="passive",
-        help="passive is the control condition; adaptive responds to the attacker",
+        help=(
+            "passive is the control condition; adaptive responds to the attacker; "
+            "targeted concentrates its monitoring on a few hosts"
+        ),
+    )
+    parser.add_argument(
+        "--detection-threshold",
+        type=float,
+        default=0.9,
+        help=(
+            "accumulated risk that ends an episode; at the 0.9 default detection "
+            "rarely fires against a competent attacker, so lower it to make risk bind"
+        ),
+    )
+    parser.add_argument(
+        "--attacker-memory",
+        action="store_true",
+        help=(
+            "add a per-host watch-recency channel (how long since attention last "
+            "landed there), so a policy can read a re-aiming defender's pattern "
+            "instead of only its current snapshot"
+        ),
     )
     parser.add_argument(
         "--discovery",
@@ -261,6 +297,21 @@ def build_parser() -> argparse.ArgumentParser:
     conditions.add_argument(
         "--policy-algorithm", choices=("dqn", "ppo", "maskable-ppo"), default="maskable-ppo"
     )
+    conditions.add_argument(
+        "--family",
+        choices=tuple(FAMILIES),
+        default=None,
+        help="sweep on a topology family instead of the generator",
+    )
+    conditions.add_argument("--family-hosts", type=int, default=8, help="host count for --family")
+    conditions.add_argument(
+        "--attention-grid",
+        action="store_true",
+        help=(
+            "use the targeted-attention grid (passive, adaptive, targeted, "
+            "targeted+noisy) instead of the published defender x discovery grid"
+        ),
+    )
     conditions.add_argument("--output", type=Path, default=Path("artifacts/conditions.jsonl"))
     conditions.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
     _add_significance_arguments(conditions, default_reference=CONTROL_LABEL)
@@ -318,6 +369,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_experiment_arguments(equilibrium)
     equilibrium.add_argument("--iterations", type=int, default=20_000)
+    equilibrium.add_argument(
+        "--family",
+        choices=tuple(FAMILIES),
+        default=None,
+        help="solve the grid on a held-out topology family instead of the generator",
+    )
+    equilibrium.add_argument(
+        "--family-hosts",
+        type=int,
+        default=8,
+        help="host count for --family",
+    )
     equilibrium.add_argument("--output", type=Path, default=Path("artifacts/equilibrium.json"))
 
     sweep = commands.add_parser(
@@ -360,9 +423,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train.add_argument(
         "--defender",
-        choices=("passive", "adaptive"),
+        choices=("passive", "adaptive", "targeted"),
         default="passive",
-        help="train against a passive or an adaptive defender",
+        help="train against a passive, an adaptive, or a targeted defender",
+    )
+    train.add_argument(
+        "--detection-threshold",
+        type=float,
+        default=0.9,
+        help=(
+            "accumulated risk that ends a training episode; at the 0.9 default "
+            "detection rarely fires, so a policy has little reason to learn to evade"
+        ),
+    )
+    train.add_argument(
+        "--attacker-memory",
+        action="store_true",
+        help=(
+            "add a per-host watch-recency channel (how long since attention last "
+            "landed there), so a policy can read a re-aiming defender's pattern "
+            "instead of only its current snapshot"
+        ),
     )
     train.add_argument(
         "--reward",
@@ -374,6 +455,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--adversarial",
         action="store_true",
         help="let a contextual defender learn alongside the attacker during training",
+    )
+    train.add_argument(
+        "--family",
+        choices=tuple(FAMILIES),
+        default=None,
+        help=(
+            "train the curriculum on a topology family instead of the generator's "
+            "single chain shape, growing the host count across stages"
+        ),
     )
     train.add_argument(
         "--forget-previous-stages",
@@ -407,6 +497,8 @@ def _config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         observation=cast(ObservationMode, args.observation),
         defender=cast(DefenderMode, args.defender),
         discovery=cast(DiscoveryMode, args.discovery),
+        detection_threshold=args.detection_threshold,
+        attacker_memory=args.attacker_memory,
     )
 
 
@@ -613,11 +705,25 @@ def _run_conditions(args: argparse.Namespace) -> int:
 
     config = _config_from_args(args)
     agent_factory, label = _agent_factory_from_args(args, config)
-    metrics = run_condition_sweep(config, agent_factory)
+    builder = None
+    if args.family is not None:
+        hosts = args.family_hosts
+
+        def builder(seed: int) -> Scenario:
+            return build_family_scenario(cast(str, args.family), hosts, seed)
+
+    grid = ATTENTION_GRID if args.attention_grid else CONDITION_GRID
+    metrics = run_condition_sweep(config, agent_factory, grid, builder)
     output = write_results(metrics, args.output, args.format)
+    scenarios = (
+        f"{args.family}/{args.family_hosts} hosts"
+        if args.family is not None
+        else f"{config.size}/{config.difficulty}"
+    )
     print("RLAttack condition sweep")
     print(f"  policy    : {label}")
-    print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
+    print(f"  scenarios : {scenarios} x {config.benchmark_episodes} seeds")
+    print(f"  detection : threshold {config.detection_threshold}")
     for name, metric in metrics.items():
         print(
             f"  {name:<17} success={metric.success_rate:5.1%} "
@@ -745,7 +851,8 @@ def _run_families(args: argparse.Namespace) -> int:
             f"  {name:<6} success={metric.success_rate:5.1%} "
             f"detected={metric.detection_rate:5.1%} "
             f"steps={metric.mean_steps:6.2f}±{metric.std_steps:5.2f} "
-            f"edges={shape.edges:3} diameter={shape.diameter}{held_out}"
+            f"edges={shape.edges:3} diameter={shape.diameter} "
+            f"routes={shape.route_diversity}{held_out}"
         )
     _print_comparisons(metrics, args)
     print(f"  export    : {output}")
@@ -756,13 +863,26 @@ def _run_equilibrium(args: argparse.Namespace) -> int:
     """Solve the attacker x defender policy grid and report the mixtures."""
 
     config = _config_from_args(args)
-    solved = solve_grid(config, iterations=args.iterations)
+    builder = None
+    if args.family is not None:
+        hosts = args.family_hosts
+
+        def builder(seed: int) -> Scenario:
+            return build_family_scenario(cast(str, args.family), hosts, seed)
+
+    solved = solve_grid(config, iterations=args.iterations, scenario_builder=builder)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(asdict(solved), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print("RLAttack attacker x defender equilibrium")
-    print(f"  scenarios : {config.size}/{config.difficulty} x {config.benchmark_episodes} seeds")
+    scenarios = (
+        f"{args.family}/{args.family_hosts} hosts"
+        if args.family is not None
+        else f"{config.size}/{config.difficulty}"
+    )
+    print(f"  scenarios : {scenarios} x {config.benchmark_episodes} seeds")
+    print(f"  detection : threshold {config.detection_threshold}")
     header = "  ".join(f"{label[:9]:>9}" for label in solved.defender_labels)
     corner = "attacker / defender"
     print(f"  {corner:<22} {header}")
@@ -831,11 +951,23 @@ def _run_training(args: argparse.Namespace) -> int:
         args.seed,
     )
 
-    observation_config = (
-        ObservationConfig.for_curriculum()
-        if args.observation == "curriculum"
-        else ObservationConfig()
+    # Every training condition is derived from one ExperimentConfig rather than
+    # rebuilt here. A flag that is printed in the banner but never reaches the
+    # environment cost a whole 400k run in v0.7, and rebuilding the conditions in two
+    # places is exactly how that happens.
+    conditions = ExperimentConfig(
+        size=cast(ScenarioSize, args.size),
+        difficulty=cast(Difficulty, args.difficulty),
+        seed=args.seed,
+        reward_strategy=cast(RewardStrategy, args.reward),
+        step_budget=args.step_budget,
+        observation=cast(ObservationMode, args.observation),
+        defender=cast(DefenderMode, args.defender),
+        discovery=cast(DiscoveryMode, args.discovery),
+        detection_threshold=args.detection_threshold,
+        attacker_memory=args.attacker_memory,
     )
+    observation_config = conditions.observation_config()
 
     def env_factory() -> AttackPathEnv:
         return AttackPathEnv(
@@ -845,14 +977,13 @@ def _run_training(args: argparse.Namespace) -> int:
         )
 
     if args.curriculum:
+        base = family_curriculum(args.family) if args.family is not None else DEFAULT_CURRICULUM
         stages = (
-            scale_curriculum(DEFAULT_CURRICULUM, args.curriculum_timesteps)
-            if args.curriculum_timesteps
-            else DEFAULT_CURRICULUM
+            scale_curriculum(base, args.curriculum_timesteps) if args.curriculum_timesteps else base
         )
-        dynamics = DynamicsConfig(noisy_discovery=args.discovery == "noisy")
+        dynamics = conditions.dynamics()
         opponent = ContextualDefender() if args.adversarial else None
-        defender = DefenderConfig.adaptive() if args.defender == "adaptive" else DefenderConfig()
+        defender = conditions.defender_config()
         train_curriculum(
             [
                 _stage_env_builder(
@@ -874,7 +1005,8 @@ def _run_training(args: argparse.Namespace) -> int:
         labels = ", ".join(stage.label for stage in stages)
         print(
             f"Trained {args.algorithm} curriculum ({labels}) under "
-            f"{'adversarial' if args.adversarial else args.defender}/{args.discovery} "
+            f"{'adversarial' if args.adversarial else args.defender}/{args.discovery}"
+            f"/threshold {conditions.detection_threshold} "
             f"into {args.output_dir.resolve()}"
         )
         return 0

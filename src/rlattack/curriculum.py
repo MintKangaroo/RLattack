@@ -8,7 +8,7 @@ observation and action spaces for every generated size and difficulty.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import gymnasium as gym
@@ -18,6 +18,7 @@ from rlattack.agents import Agent
 from rlattack.defender import ContextualDefender, DefenderConfig
 from rlattack.env import AttackPathEnv, DynamicsConfig, Observation, ObservationConfig
 from rlattack.evaluation import BenchmarkMetrics, evaluate_agent
+from rlattack.families import FAMILIES, build_scenario
 from rlattack.game import episode_defender_reward
 from rlattack.generator import Difficulty, ScenarioSize, generate_scenario
 from rlattack.reward import RewardStrategy, build_reward_config
@@ -30,6 +31,8 @@ class CurriculumStage:
     size: ScenarioSize
     difficulty: Difficulty
     timesteps: int = 20_000
+    family: str | None = None
+    hosts: int = 8
 
     def __post_init__(self) -> None:
         if self.size not in ("small", "medium", "large"):
@@ -38,24 +41,34 @@ class CurriculumStage:
             raise ValueError("difficulty must be easy, medium, or hard")
         if self.timesteps < 1:
             raise ValueError("timesteps must be positive")
+        if self.family is not None and self.family not in FAMILIES:
+            raise ValueError(f"unknown topology family: {self.family}")
+        if self.hosts < 2:
+            raise ValueError("hosts must be at least 2")
 
     @property
     def label(self) -> str:
-        """Return a stable ``size/difficulty`` label for tables and exports."""
+        """Return a stable label for tables and exports."""
 
+        if self.family is not None:
+            return f"{self.family}/{self.hosts}"
         return f"{self.size}/{self.difficulty}"
 
     def step_budget(self, base: int) -> int:
         """Scale a base step budget to this stage's scenario size.
 
         A budget that fits ``small`` starves ``large``: without scaling, a transfer
-        table reports budget exhaustion as if it were a generalization failure.
+        table reports budget exhaustion as if it were a generalization failure. A
+        family stage scales on its host count instead, which is the only size it has.
         """
 
+        if self.family is not None:
+            return max(1, round(base * self.hosts / _FAMILY_REFERENCE_HOSTS))
         return max(1, round(base * _BUDGET_SCALE[self.size]))
 
 
 _BUDGET_SCALE: dict[str, float] = {"small": 1.0, "medium": 1.6, "large": 3.0}
+_FAMILY_REFERENCE_HOSTS = 6
 
 DEFAULT_CURRICULUM: tuple[CurriculumStage, ...] = (
     CurriculumStage("small", "easy", 20_000),
@@ -63,6 +76,25 @@ DEFAULT_CURRICULUM: tuple[CurriculumStage, ...] = (
     CurriculumStage("medium", "medium", 30_000),
     CurriculumStage("medium", "hard", 30_000),
 )
+
+
+def family_curriculum(
+    family: str, host_counts: Sequence[int] = (5, 6, 8, 10), timesteps: int = 20_000
+) -> tuple[CurriculumStage, ...]:
+    """Return a curriculum over one topology family, growing the host count.
+
+    The generator emits one shape, so a policy trained on its curriculum has never seen
+    an alternative route to anything. Training on a family whose instances have more
+    than one node-disjoint route is what gives a learner the chance to discover that
+    routing around a watcher is a strategy at all.
+    """
+
+    if not host_counts:
+        raise ValueError("a family curriculum needs at least one host count")
+    return tuple(
+        CurriculumStage("medium", "hard", timesteps=timesteps, family=family, hosts=hosts)
+        for hosts in host_counts
+    )
 
 
 def scale_curriculum(
@@ -79,11 +111,12 @@ def scale_curriculum(
     if total_timesteps < len(stages):
         raise ValueError("total_timesteps must leave at least one step per stage")
     budget = sum(stage.timesteps for stage in stages)
+    # Rescaling changes only the budget. Rebuilding the stage from a subset of its
+    # fields is how a family curriculum silently reverts to generated scenarios.
     return tuple(
-        CurriculumStage(
-            stage.size,
-            stage.difficulty,
-            max(1, round(total_timesteps * stage.timesteps / budget)),
+        replace(
+            stage,
+            timesteps=max(1, round(total_timesteps * stage.timesteps / budget)),
         )
         for stage in stages
     )
@@ -123,7 +156,9 @@ def stage_env_factory(
 
     def build(seed: int) -> AttackPathEnv:
         return AttackPathEnv(
-            generate_scenario(stage.size, stage.difficulty, seed),
+            build_scenario(stage.family, stage.hosts, seed)
+            if stage.family is not None
+            else generate_scenario(stage.size, stage.difficulty, seed),
             step_budget=scaled_budget,
             reward_config=reward_config,
             dynamics=dynamics,

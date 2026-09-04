@@ -110,26 +110,69 @@
     grid favours the adversarially trained policy significantly, and the two exact
     conditions trend against it. The defender axis is nearly inert - adaptive vs passive
     is insignificant *within* each policy - so adversarial training builds robustness to
-    pressure that is not there. Same root cause as item 53; see item 55)
+    pressure that is not there. Same root cause as item 53; see items 55 and 58)
 53. Enrich the policy grid until the equilibrium is mixed. (**answered negatively**:
     enriching it did not produce mixing, and the reason is that detection risk is a
     single scalar penalizing all activity uniformly, so no attacker strategy trades off
-    against another - see item 55)
+    against another - see item 55, which reproduces the mixing this item could not by
+    replacing the single scalar with per-host attention)
 54. A held-out scenario family the generator cannot produce. (completed: star, tree,
     mesh, and ring topologies, which separate agents sharply - the graph oracle scores
     100% on star and 12.5% on ring under noisy discovery)
 
-## Next
+## v1.0 - targeted attention and the first mixed equilibrium
 
 55. Give the defender targeted attention - per-host monitoring an attacker can route
-    around - so that evading one defender exposes you to another. Without it the policy
-    grid cannot have a mixed equilibrium, because doing less is always better, and
-    adversarial training has no pressure to learn against (items 52 and 53 both stall
-    here). This is the highest-value item on the list.
+    around - so that evading one defender exposes you to another. (**completed, and it
+    unblocks items 52 and 53**: with a conserved attention budget, an evasive attacker
+    arm, and detection made binding, the attacker x defender grid mixes for the first
+    time - attacker `shortest-path` 82% / `shortest-path-evasive` 18% against defender
+    `attention-narrow` 54% / `attention-broad` 46%. Two conditions are *both* required,
+    and each alone leaves the grid pure: **route diversity**, because routing around a
+    watcher needs somewhere else to route - `mesh` is the only family with more than
+    one node-disjoint route and the only one that mixes - and a **binding detection
+    threshold**, because at the 0.9 default the oracle is detected in ~5% of episodes
+    and nothing that re-prices risk can change an outcome.)
+
+58. Re-run item 52 (adversarial training) in the condition that item 55 found: mesh
+    structure with a binding threshold. (**answered, and it sharpens item 52**:
+    adversarial training does not help - against the targeted defender it *hurts*,
+    77.1% -> 46.4% on targeted/exact, -30.7 pp, p=0.0001, consistent across three
+    training seeds. The defender axis is no longer inert, so the excuse from item 52 is
+    gone; the reason is that the fixed-trained policy learns the defender's standing
+    attention posture and routes through the blind hosts - scoring *higher* against the
+    targeted defender than against none - while the adversarial policy trains against a
+    re-aiming defender with no stable posture to learn and falls back to doing less. A
+    learning defender's value is that it denies the attacker a fixed target.)
+59. Train a policy that learns to route around monitoring, rather than reading the
+    monitoring channel through a hand-written oracle. (**answered partially by item 58**:
+    the fixed-trained MaskablePPO puts only 11.4% of its risky actions on watched hosts,
+    against a 23.0% chance rate and matching the hand-written oracle's ~10% - so a learner
+    does find the evasion strategy when the defender's posture is stable. Open: whether it
+    can be learned against a re-aiming defender, where item 58 found it is not.)
+
+## Next
+
 56. Report the family results for trained policies, not only baselines, and check
     whether curriculum training on chains transfers to star, tree, mesh, and ring.
+    (**answered**: a chain-curriculum MaskablePPO transfers to star/tree/mesh at
+    100/100/87.5% - better than its own 62.5% on chain, since a policy hardened on
+    winding chains finds simpler structures easy - but scores 0% on ring, the same wall
+    the oracle hit. Structure, not training distribution, bounds transfer.)
 57. Vary host count within a family, so structure and scale are separable rather than
     confounded in one number.
+60. Give the attacker a noisier read on monitoring. The current channel reports watched
+    hosts exactly for every discovered host, which is an optimistic bound on what an
+    attacker can fingerprint.
+61. Learn evasion against a re-aiming defender, or show it cannot be learned - the open
+    half of item 59. Item 58 found a fixed posture is learnable and a re-aiming one is
+    not for this policy; whether a policy with memory of the defender's moves can close
+    that gap is the question. (**answered, negatively**: a per-host watch-recency
+    channel (`--attacker-memory`) makes no measurable difference against the
+    `--adversarial` defender - 49.5% vs 49.0% success, reward difference indistinguishable
+    from zero over 192 paired episodes across 3 seeds each. Re-aiming's unpredictability
+    swamps whatever signal per-step recency carries at this training budget. Whether a
+    recurrent policy or a longer budget closes the gap is still open.)
 
 Each milestone is delivered as a small logical change only after lint, formatting,
 typing, and tests pass.

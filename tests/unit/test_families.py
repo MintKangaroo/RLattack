@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import networkx as nx
 import pytest
 
 from rlattack.agents import Agent, GreedyAgent, ShortestPathOracle
@@ -8,6 +9,7 @@ from rlattack.families import (
     FAMILIES,
     HELD_OUT_FAMILIES,
     FamilyShape,
+    _route_diversity,
     build_scenario,
     evaluate_families,
 )
@@ -72,3 +74,31 @@ def test_family_evaluation_shares_one_seed_list() -> None:
 
     with pytest.raises(ValueError, match="at least one scenario family"):
         evaluate_families(greedy_factory, (1,), ())
+
+
+def test_route_diversity_separates_the_families() -> None:
+    """The structural variable that decides whether monitoring can be routed around."""
+
+    diversity = {
+        family: FamilyShape.measure(family, 8, seed=0).route_diversity for family in FAMILIES
+    }
+
+    # Mesh is the only family offering an alternative way to the deepest host, which is
+    # why it is the only one whose policy grid has a mixed equilibrium.
+    assert diversity["mesh"] > 1
+    assert all(value == 1 for family, value in diversity.items() if family != "mesh")
+
+
+def test_route_diversity_of_a_graph_with_nowhere_to_go() -> None:
+    empty: nx.DiGraph[object] = nx.DiGraph()
+
+    assert _route_diversity(empty) == 0
+    single: nx.DiGraph[object] = nx.DiGraph()
+    single.add_node("only")
+
+    assert _route_diversity(single) == 0
+
+    isolated: nx.DiGraph[object] = nx.DiGraph()
+    isolated.add_nodes_from(("entry", "island"))
+
+    assert _route_diversity(isolated) == 0

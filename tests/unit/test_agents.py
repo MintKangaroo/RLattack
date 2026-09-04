@@ -10,7 +10,13 @@ from rlattack.agents import (
     ShortestPathOracle,
     action_name,
 )
-from rlattack.env import ACTION_NAMES, Action, AttackPathEnv, DynamicsConfig
+from rlattack.env import (
+    ACTION_NAMES,
+    Action,
+    AttackPathEnv,
+    DynamicsConfig,
+    Observation,
+)
 from rlattack.generator import generate_scenario
 from rlattack.scenario import Host, NetworkEdge, Objective, Scenario
 
@@ -175,3 +181,82 @@ def test_the_broad_oracle_takes_more_of_the_network_than_the_route() -> None:
 
     assert broad_credentials > focused_credentials
     assert broad_steps > focused_steps, "the extra footholds cost extra actions"
+
+
+def diamond_scenario() -> Scenario:
+    """Two equal-length routes from the entry to the objective, via ``north`` or ``south``."""
+
+    return Scenario(
+        id="diamond",
+        name="diamond",
+        hosts=(Host(id="entry"), Host(id="north"), Host(id="south"), Host(id="goal")),
+        entry_host_ids=("entry",),
+        objectives=(Objective(id="objective", name="goal", host_id="goal"),),
+        network_edges=(
+            NetworkEdge(source_host_id="entry", target_host_id="north"),
+            NetworkEdge(source_host_id="entry", target_host_id="south"),
+            NetworkEdge(source_host_id="north", target_host_id="goal"),
+            NetworkEdge(source_host_id="south", target_host_id="goal"),
+        ),
+    )
+
+
+def watched_observation(scenario: Scenario, watched: set[str]) -> Observation:
+    channel = np.zeros(len(scenario.hosts), dtype=np.int8)
+    for index, host in enumerate(scenario.hosts):
+        if host.id in watched:
+            channel[index] = 1
+    return {
+        "monitored_hosts": channel,
+        "reachable_hosts": np.zeros(len(scenario.hosts), dtype=np.int8),
+    }
+
+
+def test_the_evasive_oracle_routes_around_a_watched_host() -> None:
+    """Monitoring is only worth observing if the route can change in response."""
+
+    scenario = diamond_scenario()
+    agent = ShortestPathOracle(scenario, evasive=True)
+    info = stop_only_info()
+
+    assert agent.route == ("entry", "north", "goal")
+
+    agent.predict(watched_observation(scenario, {"north"}), info)
+
+    assert agent.route == ("entry", "south", "goal")
+
+    # A second look at the same posture must not re-plan, and the route survives it.
+    agent.predict(watched_observation(scenario, {"north"}), info)
+
+    assert agent.route == ("entry", "south", "goal")
+
+    agent.reset(seed=1)
+
+    assert agent.route == ("entry", "north", "goal")
+
+
+def test_a_watched_objective_host_cannot_be_routed_around() -> None:
+    """Evasion is a preference over hops, not a refusal to reach the goal.
+
+    A defender that watches the crown jewel itself is the one allocation targeted
+    monitoring does not let the attacker escape - it can only choose how it arrives.
+    """
+
+    scenario = diamond_scenario()
+    agent = ShortestPathOracle(scenario, evasive=True)
+    agent.predict(watched_observation(scenario, {"goal"}), stop_only_info())
+
+    assert agent.route[-1] == "goal"
+
+
+def test_the_evasive_oracle_is_the_plain_oracle_without_a_monitoring_channel() -> None:
+    scenario = generate_scenario("medium", "hard", 1)
+    env = AttackPathEnv(scenario)
+    agent = ShortestPathOracle(scenario, evasive=True)
+    observation, info = env.reset(seed=1)
+    planned = agent.route
+    agent.predict(observation, info)
+
+    assert "monitored_hosts" not in observation
+    assert agent.route == planned
+    assert ShortestPathOracle(scenario).route == planned

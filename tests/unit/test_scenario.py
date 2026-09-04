@@ -1,6 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
+from rlattack.generator import generate_scenario
 from rlattack.scenario import (
     AccessEdge,
     Credential,
@@ -81,3 +82,26 @@ def test_scenario_records_are_immutable() -> None:
 
     with pytest.raises(ValidationError):
         host.id = "changed"
+
+
+def test_targeting_narrows_the_win_condition_to_the_chosen_objectives() -> None:
+    """Selecting a target keeps everything but the objectives it does not name."""
+
+    scenario = generate_scenario("medium", "hard", 1)
+    objective_ids = [objective.id for objective in scenario.objectives]
+    assert len(objective_ids) > 1, "need a multi-objective scenario for this test"
+
+    focused = scenario.targeting([objective_ids[0]])
+
+    assert [objective.id for objective in focused.objectives] == [objective_ids[0]]
+    # Only the win condition moves; the rest of the graph is untouched.
+    assert focused.hosts == scenario.hosts
+    assert focused.services == scenario.services
+    assert focused.network_edges == scenario.network_edges
+
+
+def test_targeting_rejects_an_objective_that_is_not_in_the_scenario() -> None:
+    scenario = generate_scenario("small", "easy", 0)
+
+    with pytest.raises(ValueError, match="at least one objective"):
+        scenario.targeting(["objective-does-not-exist"])
