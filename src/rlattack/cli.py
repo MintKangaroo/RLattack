@@ -126,6 +126,15 @@ def _add_experiment_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--attacker-memory",
+        action="store_true",
+        help=(
+            "add a per-host watch-recency channel (how long since attention last "
+            "landed there), so a policy can read a re-aiming defender's pattern "
+            "instead of only its current snapshot"
+        ),
+    )
+    parser.add_argument(
         "--discovery",
         choices=("exact", "noisy"),
         default="exact",
@@ -428,6 +437,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     train.add_argument(
+        "--attacker-memory",
+        action="store_true",
+        help=(
+            "add a per-host watch-recency channel (how long since attention last "
+            "landed there), so a policy can read a re-aiming defender's pattern "
+            "instead of only its current snapshot"
+        ),
+    )
+    train.add_argument(
         "--reward",
         choices=("sparse", "shaped", "risk-aware", "cost-aware", "pivot-focused"),
         default="risk-aware",
@@ -480,6 +498,7 @@ def _config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         defender=cast(DefenderMode, args.defender),
         discovery=cast(DiscoveryMode, args.discovery),
         detection_threshold=args.detection_threshold,
+        attacker_memory=args.attacker_memory,
     )
 
 
@@ -946,6 +965,7 @@ def _run_training(args: argparse.Namespace) -> int:
         defender=cast(DefenderMode, args.defender),
         discovery=cast(DiscoveryMode, args.discovery),
         detection_threshold=args.detection_threshold,
+        attacker_memory=args.attacker_memory,
     )
     observation_config = conditions.observation_config()
 

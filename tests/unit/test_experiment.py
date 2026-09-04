@@ -169,3 +169,17 @@ def test_a_targeted_defender_is_reported_to_the_agent() -> None:
     transferable = ExperimentConfig(defender="targeted", observation="curriculum")
     assert transferable.observation_config().expose_monitoring
     assert not ExperimentConfig(defender="adaptive").observation_config().expose_monitoring
+
+
+def test_attacker_memory_reaches_the_observation_config() -> None:
+    """A flag that never reaches the environment cost a whole 400k run in v0.7 (item 61)."""
+
+    memory = ExperimentConfig(defender="targeted", attacker_memory=True)
+    assert memory.observation_config().expose_watch_history
+
+    curriculum = ExperimentConfig(
+        defender="targeted", observation="curriculum", attacker_memory=True
+    )
+    assert curriculum.observation_config().expose_watch_history
+
+    assert not ExperimentConfig(defender="targeted").observation_config().expose_watch_history

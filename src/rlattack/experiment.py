@@ -73,6 +73,7 @@ class ExperimentConfig:
     defender: DefenderMode = "passive"
     discovery: DiscoveryMode = "exact"
     detection_threshold: float = 0.9
+    attacker_memory: bool = False
 
     def __post_init__(self) -> None:
         if self.size not in {"small", "medium", "large"}:
@@ -140,8 +141,12 @@ class ExperimentConfig:
 
         monitoring = self.defender == "targeted"
         if self.observation == "curriculum":
-            return ObservationConfig.for_curriculum(expose_monitoring=monitoring)
-        return ObservationConfig(expose_monitoring=monitoring)
+            return ObservationConfig.for_curriculum(
+                expose_monitoring=monitoring, expose_watch_history=self.attacker_memory
+            )
+        return ObservationConfig(
+            expose_monitoring=monitoring, expose_watch_history=self.attacker_memory
+        )
 
 
 @dataclass(frozen=True)

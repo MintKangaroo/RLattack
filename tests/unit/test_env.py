@@ -909,3 +909,74 @@ def test_hardening_re_aims_a_targeted_defender_onto_the_ground_already_taken() -
     # The watcher follows the evidence onto the host the attacker holds, which leaves
     # the frontier it has not reached yet cheaper than it was.
     assert env.monitored_hosts() == ("web",)
+
+
+def test_watch_recency_reports_zero_for_the_host_watched_this_step() -> None:
+    env = deterministic_env(
+        defender=watching(1),
+        observation_config=ObservationConfig(expose_watch_history=True),
+    )
+    observation, _ = env.reset(seed=1)
+    host_ids = [host.id for host in env.scenario.hosts]
+
+    assert "watch_recency" in observation
+    assert observation["watch_recency"][host_ids.index("web")] == pytest.approx(0.0)
+
+
+def test_watch_recency_grows_stale_without_a_re_aim() -> None:
+    env = deterministic_env(
+        defender=watching(1),
+        observation_config=ObservationConfig(expose_watch_history=True),
+    )
+    env.reset(seed=1)
+    host_ids = [host.id for host in env.scenario.hosts]
+    web = host_ids.index("web")
+
+    observation, _, _, _, _ = env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+    first = observation["watch_recency"][web]
+    observation, _, _, _, _ = env.step(env.encode_action(Action.ENUMERATE_SERVICE, 0))
+    second = observation["watch_recency"][web]
+
+    # ``web`` was watched at reset and the default defender rarely re-aims, so the
+    # channel should read strictly larger the longer it goes without a fresh landing.
+    assert 0.0 < first < second
+
+
+def test_watch_recency_resets_to_zero_when_attention_moves() -> None:
+    env = deterministic_env(
+        defender=watching(
+            1,
+            alert_threshold=0.0,
+            response_cooldown=1,
+            revocation_probability=0.0,
+            response_latency=0,
+            observation_noise=0.0,
+        ),
+        observation_config=ObservationConfig(expose_watch_history=True),
+    )
+    env.reset(seed=1)
+    host_ids = [host.id for host in env.scenario.hosts]
+    web = host_ids.index("web")
+
+    observation, _, _, _, _ = env.step(env.encode_action(Action.SCAN_SERVICE, 0))
+    # Hardening re-aims onto ``web`` (already reached) this step, so it is fresh.
+    assert env.monitored_hosts() == ("web",)
+    assert observation["watch_recency"][web] == pytest.approx(0.0)
+
+
+def test_watch_recency_is_pinned_undiscovered_and_off_by_default() -> None:
+    env = deterministic_env(
+        defender=watching(1),
+        observation_config=ObservationConfig(expose_watch_history=True),
+    )
+    observation, _ = env.reset(seed=1)
+    undiscovered = np.flatnonzero(observation["discovered_hosts"] == 0)
+
+    assert bool(np.all(observation["watch_recency"][undiscovered] == 1.0))
+
+    passive = deterministic_env(observation_config=ObservationConfig(expose_watch_history=True))
+    passive_obs, _ = passive.reset(seed=1)
+    assert bool(np.all(passive_obs["watch_recency"] == 1.0))
+
+    off, _ = deterministic_env(defender=watching(1)).reset(seed=1)
+    assert "watch_recency" not in off

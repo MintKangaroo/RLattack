@@ -187,6 +187,15 @@ class ObservationConfig:
     The modelled capability is fingerprinting a scanned host's monitoring posture; a
     real attacker's read on that is noisier than this, so treat the resulting evasion
     numbers as an optimistic bound.
+
+    ``expose_watch_history`` adds a per-host recency channel: how long ago (as a
+    fraction of the step budget, discovered hosts only) attention last landed there.
+    ``monitored_hosts`` is a snapshot of *right now*; it cannot tell a policy whether a
+    re-aiming defender's current posture is stable or the result of the attacker's own
+    last move, which is the distinction a memoryless policy needs to exploit a
+    contextual (``--adversarial``) defender rather than only a fixed one (item 61). Off
+    by default for the same reason as ``expose_monitoring`` - it widens the observation
+    space, and a checkpoint trained without it cannot be loaded with it.
     """
 
     host_capacity: int | None = None
@@ -199,6 +208,7 @@ class ObservationConfig:
     objective_capacity: int | None = None
     expose_exact_risk: bool = False
     expose_monitoring: bool = False
+    expose_watch_history: bool = False
     alert_levels: int = 3
 
     def __post_init__(self) -> None:
@@ -220,7 +230,11 @@ class ObservationConfig:
 
     @classmethod
     def for_curriculum(
-        cls, *, expose_exact_risk: bool = False, expose_monitoring: bool = False
+        cls,
+        *,
+        expose_exact_risk: bool = False,
+        expose_monitoring: bool = False,
+        expose_watch_history: bool = False,
     ) -> ObservationConfig:
         """Return capacities large enough for every generated scenario class.
 
@@ -239,6 +253,7 @@ class ObservationConfig:
             objective_capacity=8,
             expose_exact_risk=expose_exact_risk,
             expose_monitoring=expose_monitoring,
+            expose_watch_history=expose_watch_history,
         )
 
 
@@ -359,6 +374,10 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             channels["detection_risk"] = spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32)
         if config.expose_monitoring:
             channels["monitored_hosts"] = spaces.MultiBinary(self._host_width)
+        if config.expose_watch_history:
+            channels["watch_recency"] = spaces.Box(
+                0.0, 1.0, shape=(self._host_width,), dtype=np.float32
+            )
         self.observation_space = spaces.Dict(channels)
         self._reset_state()
 
@@ -389,6 +408,10 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         self._objective_captured = False
         self._host_hardening = np.zeros(self._host_width, dtype=np.float32)
         self._host_attention = np.ones(self._host_width, dtype=np.float32)
+        # A sentinel far outside the step budget, not -1: "never watched" must clip to
+        # the same 1.0 (maximally stale) as "watched a very long time ago", not be
+        # mistaken for a small step count.
+        self._host_last_watched_step = np.full(self._host_width, -10_000, dtype=np.int32)
         self._aim_attention(self._default_watchlist())
         self._last_response_step = 0
         self._defender_actions = 0
@@ -937,7 +960,9 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         watched = list(dict.fromkeys(watchlist))[: self.defender.attention_hosts]
         self._host_attention[:] = blind
         for host_id in watched:
-            self._host_attention[self._host_index[host_id]] = focus
+            index = self._host_index[host_id]
+            self._host_attention[index] = focus
+            self._host_last_watched_step[index] = self._steps
 
     def _alerted_watchlist(self) -> tuple[str, ...]:
         """Return where a defender re-aims once the attacker has shown itself.
@@ -1061,6 +1086,8 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
             observation["detection_risk"] = np.array([self._detection_risk], dtype=np.float32)
         if self.observation_config.expose_monitoring:
             observation["monitored_hosts"] = self._monitoring_observation()
+        if self.observation_config.expose_watch_history:
+            observation["watch_recency"] = self._watch_recency_observation()
         return observation
 
     def _monitoring_observation(self) -> np.ndarray[Any, np.dtype[np.int8]]:
@@ -1072,6 +1099,26 @@ class AttackPathEnv(gym.Env[Observation, np.int64]):
         real = len(self.scenario.hosts)
         watched[:real] = (self._host_attention[:real] > 1.0).astype(np.int8)
         return watched * self._discovered_hosts
+
+    def _watch_recency_observation(self) -> np.ndarray[Any, np.dtype[np.float32]]:
+        """Return, per discovered host, how long ago attention last landed there.
+
+        0.0 means watched right now; 1.0 means never watched (or long enough ago that
+        it no longer matters) - the same value, deliberately, since a memoryless
+        ``monitored_hosts`` snapshot cannot tell those apart but a re-aiming defender's
+        *pattern* is exactly what this channel is for (item 61). Undiscovered hosts are
+        also pinned to 1.0 so this cannot leak the topology ahead of discovery.
+        """
+
+        recency = np.ones(self._host_width, dtype=np.float32)
+        if not self.defender.targeted_attention:
+            return recency
+        real = len(self.scenario.hosts)
+        since = self._steps - self._host_last_watched_step[:real]
+        steps_since = np.clip(since, 0, self.step_budget)
+        recency[:real] = steps_since.astype(np.float32) / self.step_budget
+        recency[:real] = np.where(self._discovered_hosts[:real] > 0, recency[:real], 1.0)
+        return recency
 
     def _host_detection_increment(self, host_id: str) -> float:
         probabilities = [

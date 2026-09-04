@@ -949,6 +949,45 @@ def test_cli_adversarial_training_attaches_a_learning_defender(
     assert "adversarial/exact" in capsys.readouterr().out
 
 
+def test_cli_attacker_memory_reaches_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flag that never reaches the environment cost a whole 400k run in v0.7 (item 61)."""
+
+    monkeypatch.setattr(cli, "training_dependencies_available", lambda: True)
+    built: list[object] = []
+
+    def record(
+        builders: list[object], timesteps: list[int], config: object, algorithm: str
+    ) -> None:
+        for builder in builders:
+            built.append(cast(Callable[[], StageEnv], builder)())
+
+    monkeypatch.setattr(cli, "train_curriculum", record)
+
+    assert (
+        cli.main(
+            [
+                "train",
+                "--curriculum",
+                "--defender",
+                "targeted",
+                "--attacker-memory",
+                "--curriculum-timesteps",
+                "8",
+                "--output-dir",
+                str(tmp_path / "mem"),
+            ]
+        )
+        == 0
+    )
+
+    assert built, "no curriculum stage was built"
+    for stage_env in built:
+        for env in cast(StageEnv, stage_env)._envs:
+            assert env.observation_config.expose_watch_history
+
+
 def test_cli_families_evaluates_the_held_out_topologies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
